@@ -21,6 +21,9 @@ const loginShell = () => {
 const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
 // Machine-scoped in the manifest, so a workspace's .vscode/settings.json can't turn encryption off.
 const ENCRYPT_KEY = 'terminalThreads.historyEncryption';
+// Screen-reader users get the terminal text as DOM rows, as in VS Code's own terminal.
+const A11Y_KEY = 'editor.accessibilitySupport';
+const screenReader = () => vscode.workspace.getConfiguration().get<string>(A11Y_KEY) === 'on';
 const encryptSetting = () => vscode.workspace.getConfiguration().get<string>(ENCRYPT_KEY, 'on') !== 'off';
 export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private readonly context: vscode.ExtensionContext;
@@ -45,7 +48,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     context.subscriptions.push(
       vscode.window.onDidChangeWindowState(() => this.updateWatched()),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (FONT_KEYS.some((k) => e.affectsConfiguration(k))) this.postFont();
+        if (FONT_KEYS.some((k) => e.affectsConfiguration(k)) || e.affectsConfiguration(A11Y_KEY)) this.postFont();
         if (e.affectsConfiguration(SAVE_KEY)) void this.manager?.setSaveHistory(saveSetting());
         if (e.affectsConfiguration(ENCRYPT_KEY)) this.manager?.setEncryption(encryptSetting());
       }),
@@ -240,7 +243,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private postFont(): void {
-    this.post({ type: 'font', font: this.font() });
+    this.post({ type: 'font', font: this.font(), screenReader: screenReader() });
   }
 
   private postThreads(): void {
@@ -257,7 +260,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};`;
     return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<meta name="tt-font" content="${JSON.stringify(this.font()).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">
+<meta name="tt-font" content="${JSON.stringify({ ...this.font(), screenReader: screenReader() }).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">
 <link rel="stylesheet" href="${src('xterm.css')}">
 <link rel="stylesheet" href="${src('webview.css')}">
 </head><body>

@@ -8,7 +8,7 @@ export type HostMsg =
   | { type: 'threads'; threads: ThreadInfo[]; selected: string | null }
   | { type: 'snapshot'; id: string; seq: number; data: string }
   | { type: 'data'; id: string; seq: number; data: string }
-  | { type: 'font'; font: FontConfig };
+  | { type: 'font'; font: FontConfig; screenReader: boolean };
 
 export type ViewMsg =
   | { type: 'ready'; cols: number; rows: number }

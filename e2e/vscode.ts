@@ -1,0 +1,174 @@
+// Drives a real VS Code with this extension in development mode, in a throwaway profile.
+// VSCODE_PATH points at an installed VS Code executable; otherwise a pinned build is downloaded.
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import playwright from 'playwright-core';
+import type { ElectronApplication, Frame, Page } from 'playwright-core';
+import testElectron from '@vscode/test-electron';
+
+export const EXT = resolve(import.meta.dirname, '..');
+const VSCODE_VERSION = '1.147.0';
+const BASE_SETTINGS = {
+  'workbench.startupEditor': 'none',
+  'security.workspace.trust.enabled': false,
+  'update.mode': 'none',
+  'telemetry.telemetryLevel': 'off',
+  'extensions.autoUpdate': false,
+  // Screen-reader mode gives the terminal a text DOM, so tests can read it even under WebGL.
+  'editor.accessibilitySupport': 'on',
+  'window.menuStyle': 'custom',
+};
+
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export async function waitFor(pred: () => boolean | Promise<boolean>, ms = 15_000, what = 'condition'): Promise<void> {
+  const end = Date.now() + ms;
+  while (!(await pred())) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await sleep(200);
+  }
+}
+
+let executable: string | undefined;
+async function vscodeExecutable(): Promise<string> {
+  executable ??= process.env.VSCODE_PATH || (await testElectron.downloadAndUnzipVSCode(VSCODE_VERSION));
+  return executable;
+}
+
+export interface VS {
+  app: ElectronApplication;
+  page: Page;
+  profile: string;
+  folder: string;
+  restart(): Promise<void>;
+  close(): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export interface LaunchOptions {
+  settings?: Record<string, unknown>;
+  workspaceSettings?: Record<string, unknown>;
+}
+
+export function writeUserSettings(profile: string, settings: Record<string, unknown>): void {
+  writeFileSync(join(profile, 'user', 'User', 'settings.json'), JSON.stringify({ ...BASE_SETTINGS, ...settings }));
+}
+
+export async function launchVSCode(opts: LaunchOptions = {}): Promise<VS> {
+  const profile = mkdtempSync(join(tmpdir(), 'tt-e2e-'));
+  mkdirSync(join(profile, 'user', 'User'), { recursive: true });
+  writeUserSettings(profile, opts.settings ?? {});
+  const folder = join(profile, 'ws');
+  mkdirSync(join(folder, '.vscode'), { recursive: true });
+  if (opts.workspaceSettings) writeFileSync(join(folder, '.vscode', 'settings.json'), JSON.stringify(opts.workspaceSettings));
+  const exe = await vscodeExecutable();
+
+  const vs = {} as VS;
+  const start = async () => {
+    const args = [
+      `--user-data-dir=${join(profile, 'user')}`, `--extensions-dir=${join(profile, 'ext')}`,
+      '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--new-window',
+      `--extensionDevelopmentPath=${EXT}`,
+      // CI Linux has no OS keyring; VS Code's basic store lets history saving be tested there.
+      ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu-sandbox', '--password-store=basic'] : []),
+      ...(process.env.TT_E2E_ARGS ? process.env.TT_E2E_ARGS.split(' ') : []),
+      folder,
+    ];
+    vs.app = await playwright._electron.launch({ executablePath: exe, args, timeout: 120_000 });
+    vs.page = await vs.app.firstWindow();
+    await vs.page.waitForSelector('.monaco-workbench', { timeout: 120_000 });
+  };
+  await start();
+  Object.assign(vs, {
+    profile,
+    folder,
+    restart: async () => { await vs.app.close(); await start(); },
+    close: () => vs.app.close(),
+    dispose: async () => {
+      await vs.app.close().catch(() => {});
+      if (process.env.TT_E2E_LOGS) dumpLogs(profile);
+      rmSync(profile, { recursive: true, force: true });
+    },
+  });
+  return vs;
+}
+
+export async function palette(page: Page, command: string): Promise<void> {
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P');
+  const input = await page.waitForSelector('.quick-input-widget:not([style*="display: none"]) input', { timeout: 15_000 });
+  await input.focus();
+  await input.fill('>' + command);
+  await sleep(500);
+  await page.keyboard.press('Enter');
+  await sleep(500);
+}
+
+// The thread view's inner webview frame (the one with our #list).
+export async function viewFrame(page: Page, ms = 60_000): Promise<Frame> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    for (const f of page.frames()) {
+      if (f.url().startsWith('vscode-webview://') && (await f.$('#list').catch(() => null))) return f;
+    }
+    await sleep(250);
+  }
+  throw new Error('thread view frame not found');
+}
+
+// Shows the view if it isn't already open (after a restart it usually is), then waits for a thread.
+// Avoids the palette when it can: its Enter can land in a thread that takes focus.
+export async function openThreads(page: Page): Promise<Frame> {
+  const open = await viewFrame(page, 5_000).catch(() => null);
+  if (!open) await palette(page, 'Terminal Threads: Focus on Threads View');
+  const frame = open ?? (await viewFrame(page));
+  await waitFor(async () => (await threads(frame)).length > 0, 30_000, 'first thread');
+  return frame;
+}
+
+// Webviews are drawn in an overlay, not inside the sidebar's DOM; compare positions instead.
+export async function inSecondarySidebar(page: Page, frame: Frame): Promise<boolean> {
+  const bar = await (await page.$('.part.auxiliarybar'))?.boundingBox();
+  const view = await (await frame.frameElement()).boundingBox();
+  if (!bar || !view || bar.width === 0) return false;
+  return view.x >= bar.x - 1 && view.x + view.width <= bar.x + bar.width + 1;
+}
+
+export const threads = (frame: Frame) => frame.$$eval('#list li', (lis) => lis.map((li) => ({
+  title: li.querySelector('.name')?.textContent ?? '',
+  selected: li.classList.contains('selected'),
+  waiting: !!li.querySelector('.dot'),
+})));
+
+export async function typeIn(page: Page, frame: Frame, text: string): Promise<void> {
+  await frame.click('#term .xterm');
+  await page.keyboard.type(text, { delay: 5 });
+}
+
+// Terminal text from xterm's screen-reader rows (needs editor.accessibilitySupport: on).
+export const screenText = (frame: Frame) =>
+  frame.$$eval('#term .xterm-accessibility-tree > div', (rows) => rows.map((r) => r.textContent ?? '').join('\n'));
+
+export function storeDir(profile: string): string | null {
+  const ws = join(profile, 'user', 'User', 'workspaceStorage');
+  for (const d of existsSync(ws) ? readdirSync(ws) : []) {
+    const s = join(ws, d, 'local.terminal-threads');
+    if (existsSync(s)) return s;
+  }
+  return null;
+}
+
+export function historyFiles(profile: string): string[] {
+  const s = storeDir(profile);
+  const t = s && join(s, 'threads');
+  return t && existsSync(t) ? readdirSync(t).filter((f) => f.endsWith('.json')).map((f) => join(t, f)) : [];
+}
+
+// TT_E2E_LOGS=1 prints the extension-host and main logs of each run (for CI failures).
+function dumpLogs(profile: string): void {
+  const walk = (d: string): string[] => (existsSync(d) ? readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)])) : []);
+  for (const f of walk(join(profile, 'user', 'logs')).filter((f) => /(exthost|main|renderer)\.log$/.test(f))) {
+    const lines = readFileSync(f, 'utf8').split('\n').filter((l) => /terminal-threads|secret|keyring|password|safeStorage|encryption|libsecret|node-pty|pty\.node/i.test(l) && !/AgentHost/.test(l));
+    if (lines.length) console.log(`--- ${f.split('/logs/')[1]}\n${lines.slice(-25).join('\n')}`);
+  }
+}

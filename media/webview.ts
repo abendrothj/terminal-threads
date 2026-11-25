@@ -33,12 +33,13 @@ function theme(): ITheme {
 }
 
 // The host puts the resolved terminal font in the page, so the first size reported is final.
-const initialFont = JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="tt-font"]')?.content ?? 'null') as FontConfig | null;
+const initialFont = JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="tt-font"]')?.content ?? 'null') as (FontConfig & { screenReader: boolean }) | null;
 const term = new Terminal({
   scrollback: HISTORY_LINES,
   fontFamily: initialFont?.family ?? css('--vscode-editor-font-family') ?? 'monospace',
   fontSize: initialFont?.size ?? parseInt(css('--vscode-editor-font-size') ?? '13', 10),
   lineHeight: initialFont?.lineHeight ?? 1,
+  screenReaderMode: initialFont?.screenReader ?? false,
   theme: theme(),
 });
 const fit = new FitAddon();
@@ -150,6 +151,7 @@ window.addEventListener('message', (e: MessageEvent<HostMsg>) => {
       term.options.fontFamily = msg.font.family;
       term.options.fontSize = msg.font.size;
       term.options.lineHeight = msg.font.lineHeight;
+      term.options.screenReaderMode = msg.screenReader;
       fit.fit();
       break;
     case 'data': {

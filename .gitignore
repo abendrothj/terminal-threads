@@ -4,3 +4,4 @@ dist/
 .superpowers/
 *.swp
 .*.swp
+.vscode-test/
