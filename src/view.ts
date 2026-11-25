@@ -26,6 +26,8 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | null = null;
   // Thread to show when the webview first reports ready (set by init, before any webview sync).
   private initial: string | null = null;
+  private sizeKnown: () => void = () => {};
+  private readonly viewSized = new Promise<void>((resolve) => { this.sizeKnown = resolve; });
   private size = { cols: 80, rows: 24 };
   private readonly attached = new Set<string>();
   private readonly sync = new ViewSync({
@@ -54,7 +56,13 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     view.webview.html = this.html(view.webview, dist);
     view.webview.onDidReceiveMessage((raw) => {
       const msg = parseViewMsg(raw);
-      if (msg) void this.handle(msg).catch((e) => console.error('terminal-threads:', e));
+      if (!msg) return;
+      // The first size report unblocks init(), so shells start at the view's real size.
+      if (msg.type === 'ready') {
+        this.size = { cols: msg.cols, rows: msg.rows };
+        this.sizeKnown();
+      }
+      void this.handle(msg).catch((e) => console.error('terminal-threads:', e));
     });
     view.onDidChangeVisibility(() => this.updateWatched());
     view.onDidDispose(() => {
@@ -100,6 +108,9 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async init(): Promise<void> {
+    // Spawning before the view reports its size starts shells at 80x24; the resize that follows
+    // makes some prompts redraw on a new line.
+    await this.viewSized;
     const storage = this.context.storageUri ?? this.context.globalStorageUri;
     const secrets = this.context.secrets;
     const found = await historyKey(secrets);
@@ -217,9 +228,13 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     await this.select(id);
   }
 
-  private postFont(): void {
+  private font() {
     const config = vscode.workspace.getConfiguration();
-    this.post({ type: 'font', font: resolveFont((key) => config.get(key)) });
+    return resolveFont((key) => config.get(key));
+  }
+
+  private postFont(): void {
+    this.post({ type: 'font', font: this.font() });
   }
 
   private postThreads(): void {
@@ -236,6 +251,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};`;
     return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
+<meta name="tt-font" content="${JSON.stringify(this.font()).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">
 <link rel="stylesheet" href="${src('xterm.css')}">
 <link rel="stylesheet" href="${src('webview.css')}">
 </head><body>

@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { HISTORY_LINES, type HostMsg, type ViewMsg } from '../src/protocol.ts';
 import type { ThreadInfo } from '../src/manager.ts';
+import type { FontConfig } from '../src/font.ts';
 import { cellBackground } from '../src/padding.ts';
 
 declare function acquireVsCodeApi(): { postMessage(msg: ViewMsg): void };
@@ -31,10 +32,13 @@ function theme(): ITheme {
   return t as ITheme;
 }
 
+// The host puts the resolved terminal font in the page, so the first size reported is final.
+const initialFont = JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="tt-font"]')?.content ?? 'null') as FontConfig | null;
 const term = new Terminal({
   scrollback: HISTORY_LINES,
-  fontFamily: css('--vscode-editor-font-family') ?? 'monospace',
-  fontSize: parseInt(css('--vscode-editor-font-size') ?? '13', 10),
+  fontFamily: initialFont?.family ?? css('--vscode-editor-font-family') ?? 'monospace',
+  fontSize: initialFont?.size ?? parseInt(css('--vscode-editor-font-size') ?? '13', 10),
+  lineHeight: initialFont?.lineHeight ?? 1,
   theme: theme(),
 });
 const fit = new FitAddon();
