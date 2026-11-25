@@ -1,4 +1,5 @@
 import type { ThreadInfo } from './manager.ts';
+import type { FontConfig } from './font.ts';
 
 // Saved history and the webview's scrollback must match, or saved lines can't be scrolled to.
 export const HISTORY_LINES = 5000;
@@ -6,7 +7,8 @@ export const HISTORY_LINES = 5000;
 export type HostMsg =
   | { type: 'threads'; threads: ThreadInfo[]; selected: string | null }
   | { type: 'snapshot'; id: string; seq: number; data: string }
-  | { type: 'data'; id: string; seq: number; data: string };
+  | { type: 'data'; id: string; seq: number; data: string }
+  | { type: 'font'; font: FontConfig };
 
 export type ViewMsg =
   | { type: 'ready'; cols: number; rows: number }

@@ -106,6 +106,12 @@ window.addEventListener('message', (e: MessageEvent<HostMsg>) => {
       fit.fit();
       term.focus();
       break;
+    case 'font':
+      term.options.fontFamily = msg.font.family;
+      term.options.fontSize = msg.font.size;
+      term.options.lineHeight = msg.font.lineHeight;
+      fit.fit();
+      break;
     case 'data': {
       const ack = () => vscode.postMessage({ type: 'ack', id: msg.id, chars: msg.data.length });
       if (msg.id === selected && msg.seq > snapSeq) term.write(msg.data, ack);

@@ -61,6 +61,21 @@
           "when": "false"
         }
       ]
+    },
+    "configuration": {
+      "title": "Terminal Threads",
+      "properties": {
+        "terminalThreads.fontSize": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 6,
+          "maximum": 100,
+          "markdownDescription": "Font size for terminal threads. Unset follows `#terminal.integrated.fontSize#`."
+        }
+      }
     }
   },
   "scripts": {

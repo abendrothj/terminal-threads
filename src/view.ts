@@ -5,6 +5,7 @@ import { ThreadManager } from './manager.ts';
 import { ThreadStore } from './store.ts';
 import { parseViewMsg, type HostMsg, type ViewMsg } from './protocol.ts';
 import { ViewSync } from './sync.ts';
+import { FONT_KEYS, resolveFont } from './font.ts';
 
 export const VIEW_ID = 'terminalThreads.view';
 
@@ -26,7 +27,12 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
-    context.subscriptions.push(vscode.window.onDidChangeWindowState(() => this.updateWatched()));
+    context.subscriptions.push(
+      vscode.window.onDidChangeWindowState(() => this.updateWatched()),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (FONT_KEYS.some((k) => e.affectsConfiguration(k))) this.postFont();
+      }),
+    );
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -49,8 +55,8 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   }
 
   async newThread(): Promise<void> {
-    // From the command palette the view may not exist yet; showing it starts init().
-    if (!this.ready) await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    // Always show the view: from the palette it may be hidden, or not created yet (this starts init()).
+    await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     await this.ready;
     if (!this.manager) return;
     await this.select(await this.manager.create());
@@ -98,6 +104,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case 'ready':
         this.size = { cols: msg.cols, rows: msg.rows };
+        this.postFont();
         const id = this.sync.selected ?? this.initial;
         if (id && m.get(id)) await this.select(id);
         else this.postThreads();
@@ -163,6 +170,11 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     if (choice !== 'Show') return;
     await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     await this.select(id);
+  }
+
+  private postFont(): void {
+    const config = vscode.workspace.getConfiguration();
+    this.post({ type: 'font', font: resolveFont((key) => config.get(key)) });
   }
 
   private postThreads(): void {
