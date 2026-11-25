@@ -155,3 +155,14 @@ test('a new key takes effect for later saves', async () => {
   await store.saveHistory('a', { history: 'h2', frame: null });
   assert.deepEqual(await new ThreadStore(dir, other).loadHistory('a'), { history: 'h2', frame: null });
 });
+
+test('hasEncryptedHistory reports only encrypted thread files', async () => {
+  const dir = await freshDir();
+  const store = new ThreadStore(dir, KEY);
+  assert.equal(await store.hasEncryptedHistory(), false);
+  await mkdir(join(dir, 'threads'), { recursive: true });
+  await writeFile(join(dir, 'threads', 'old.json'), JSON.stringify({ history: 'plain', frame: null }));
+  assert.equal(await store.hasEncryptedHistory(), false);
+  await store.saveHistory('a', { history: 'h', frame: null });
+  assert.equal(await store.hasEncryptedHistory(), true);
+});

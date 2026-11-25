@@ -91,6 +91,21 @@ export class ThreadStore {
     for (const f of files) await chmod(join(threads, f), 0o600).catch(ignoreMissing);
   }
 
+  // True if any thread file is encrypted; used to tell a lost key from a first run.
+  async hasEncryptedHistory(): Promise<boolean> {
+    const threads = join(this.dir, 'threads');
+    const files = await readdir(threads).catch((e) => (ignoreMissing(e), [] as string[]));
+    for (const f of files.filter((n) => n.endsWith('.json'))) {
+      const text = await readFile(join(threads, f), 'utf8').catch(() => '');
+      try {
+        if (isEncrypted(JSON.parse(text))) return true;
+      } catch {
+        // unreadable files don't count
+      }
+    }
+    return false;
+  }
+
   async deleteAllHistory(): Promise<void> {
     const threads = join(this.dir, 'threads');
     const files = await readdir(threads).catch((e) => (ignoreMissing(e), [] as string[]));

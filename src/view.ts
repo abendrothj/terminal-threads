@@ -108,6 +108,10 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     }
     const store = new ThreadStore(storage.fsPath, found?.key ?? null);
     await store.secure().catch((e) => console.warn('terminal-threads: could not tighten storage permissions', e));
+    // VS Code drops a secret it can't decrypt, so a lost key looks like a first run; say so once.
+    if (found?.created && (await store.hasEncryptedHistory())) {
+      void vscode.window.showWarningMessage("Terminal Threads' saved history was encrypted with a key VS Code here no longer has (another computer, or a reset keychain), so it can't be read. It was moved aside, and those threads start empty.");
+    }
     // Two windows can create the first key at once; the one that ends up stored wins everywhere.
     this.context.subscriptions.push(secrets.onDidChange(async (e) => {
       if (e.key !== KEY_NAME || !found) return;
