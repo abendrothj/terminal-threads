@@ -1,0 +1,8 @@
+**
+!dist/**
+!package.json
+!node_modules/node-pty/package.json
+!node_modules/node-pty/lib/**
+!node_modules/node-pty/prebuilds/darwin-arm64/**
+dist/**/*.map
+node_modules/node-pty/lib/**/*.test.js

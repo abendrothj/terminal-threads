@@ -1,0 +1,53 @@
+{
+  "name": "terminal-threads",
+  "displayName": "Terminal Threads",
+  "description": "Independent terminal threads in the sidebar, with history kept across restarts.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.146.0"
+  },
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "terminalThreads",
+          "title": "Terminal Threads",
+          "icon": "$(terminal)"
+        }
+      ]
+    },
+    "views": {
+      "terminalThreads": [
+        {
+          "type": "webview",
+          "id": "terminalThreads.view",
+          "name": "Threads"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/headless": "6.0.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.2.0-beta.18"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.8",
+    "@types/vscode": "1.146.0",
+    "@vscode/vsce": "4.1.1",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
