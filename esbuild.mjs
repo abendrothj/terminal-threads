@@ -23,4 +23,5 @@ await Promise.all([
     sourcemap: true,
   }),
   copyFile('node_modules/@xterm/xterm/css/xterm.css', 'dist/xterm.css'),
+  copyFile('media/webview.css', 'dist/webview.css'),
 ]);

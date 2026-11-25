@@ -29,6 +29,38 @@
           "name": "Threads"
         }
       ]
+    },
+    "commands": [
+      {
+        "command": "terminalThreads.new",
+        "title": "New Thread",
+        "icon": "$(add)"
+      },
+      {
+        "command": "terminalThreads.rename",
+        "title": "Rename"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "terminalThreads.new",
+          "when": "view == terminalThreads.view",
+          "group": "navigation"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "terminalThreads.rename",
+          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "terminalThreads.rename",
+          "when": "false"
+        }
+      ]
     }
   },
   "scripts": {
