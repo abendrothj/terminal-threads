@@ -43,8 +43,13 @@ export class ThreadManager {
     const { store, defaultDir } = this.deps;
     for (const meta of await store.loadIndex()) {
       const dir = [meta.lastDir, meta.startDir, defaultDir].find((d) => existsSync(d)) ?? defaultDir;
+      // One unreadable file must not lose the other threads; this one restores without history.
+      const history = await store.loadHistory(meta.id).catch((e) => {
+        console.warn(`terminal-threads: could not read history for ${meta.id}`, e);
+        return null;
+      });
       this.metas.push(meta);
-      this.open(meta.id, dir, restoredPrefix(await store.loadHistory(meta.id)));
+      this.open(meta.id, dir, restoredPrefix(history));
     }
     this.changed();
   }
@@ -145,7 +150,13 @@ export class ThreadManager {
       const t = this.threads.get(meta.id);
       if (!t || !which(t)) continue;
       t.dirty = false;
-      await this.deps.store.saveHistory(meta.id, await t.capture());
+      try {
+        await this.deps.store.saveHistory(meta.id, await t.capture());
+      } catch (e) {
+        // Keep saving the others; this one is retried on the next save.
+        t.dirty = true;
+        console.warn(`terminal-threads: could not save history for ${meta.id}`, e);
+      }
       if (t.lastDir && t.lastDir !== meta.lastDir) {
         meta.lastDir = t.lastDir;
         indexChanged = true;

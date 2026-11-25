@@ -3,7 +3,9 @@ import type { Terminal } from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
 import type { SerializeAddon } from '@xterm/addon-serialize';
 
-export const HISTORY_LINES = 5000;
+import { HISTORY_LINES } from './protocol.ts';
+
+export { HISTORY_LINES };
 export const SEPARATOR = '\x1b[2m── session ended ──\x1b[0m';
 
 export interface SavedHistory {

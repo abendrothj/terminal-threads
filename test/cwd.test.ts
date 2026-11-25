@@ -1,11 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { formatTitle, parseLsofCwd, parseOsc7, shellCwd } from '../src/cwd.ts';
 
-test('parseOsc7 decodes file URLs and rejects others', () => {
-  assert.equal(parseOsc7('file://mac/Users/ja/My%20Dir'), '/Users/ja/My Dir');
+test('parseOsc7 decodes local file URLs and rejects others', () => {
+  assert.equal(parseOsc7(`file://${hostname()}/Users/ja/My%20Dir`), '/Users/ja/My Dir');
+  assert.equal(parseOsc7(`file://${hostname().toUpperCase()}/x`), '/x');
+  assert.equal(parseOsc7(`file://${hostname().split('.')[0]}/x`), '/x');
+  assert.equal(parseOsc7('file:///x'), '/x');
+  assert.equal(parseOsc7('file://localhost/x'), '/x');
   assert.equal(parseOsc7('http://x'), null);
+});
+
+test('parseOsc7 ignores folders on other hosts (a shell ssh-ed elsewhere)', () => {
+  assert.equal(parseOsc7('file://some-remote-box/home/me'), null);
 });
 
 test('parseLsofCwd reads the name field', () => {

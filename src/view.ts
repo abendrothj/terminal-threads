@@ -4,28 +4,25 @@ import { randomBytes } from 'node:crypto';
 import { ThreadManager } from './manager.ts';
 import { ThreadStore } from './store.ts';
 import { parseViewMsg, type HostMsg, type ViewMsg } from './protocol.ts';
+import { ViewSync } from './sync.ts';
 
 export const VIEW_ID = 'terminalThreads.view';
-const BATCH_MS = 8;
-const HIGH_WATER = 200_000;
-const LOW_WATER = 20_000;
 
 export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private readonly context: vscode.ExtensionContext;
   private manager: ThreadManager | null = null;
   private ready: Promise<void> | null = null;
   private view: vscode.WebviewView | null = null;
-  private selected: string | null = null;
+  // Thread to show when the webview first reports ready (set by init, before any webview sync).
+  private initial: string | null = null;
   private size = { cols: 80, rows: 24 };
   private readonly attached = new Set<string>();
-  // Sync state for the selected thread: output is held while its snapshot is in flight.
-  private syncing = false;
-  private held: { seq: number; data: string }[] = [];
-  private batch = '';
-  private batchSeq = 0;
-  private batchTimer: ReturnType<typeof setTimeout> | null = null;
-  private unacked = 0;
-  private paused = false;
+  private readonly sync = new ViewSync({
+    post: (msg) => this.post(msg),
+    snapshot: (id) => this.manager!.get(id)!.snapshot(),
+    pause: (id) => this.manager?.get(id)?.pause(),
+    resume: (id) => this.manager?.get(id)?.resume(),
+  });
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -34,6 +31,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    this.sync.attach();
     const dist = vscode.Uri.joinPath(this.context.extensionUri, 'dist');
     view.webview.options = { enableScripts: true, localResourceRoots: [dist] };
     view.webview.html = this.html(view.webview, dist);
@@ -44,12 +42,15 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => this.updateWatched());
     view.onDidDispose(() => {
       this.view = null;
+      this.sync.detach();
       this.updateWatched();
     });
     this.ready ??= this.init();
   }
 
   async newThread(): Promise<void> {
+    // From the command palette the view may not exist yet; showing it starts init().
+    if (!this.ready) await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     await this.ready;
     if (!this.manager) return;
     await this.select(await this.manager.create());
@@ -86,7 +87,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     await m.restore();
     m.start();
     if (m.list().length === 0) await m.create();
-    this.selected = m.list()[0]?.id ?? null;
+    this.initial = m.list()[0]?.id ?? null;
   }
 
   private async handle(msg: ViewMsg): Promise<void> {
@@ -97,8 +98,9 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case 'ready':
         this.size = { cols: msg.cols, rows: msg.rows };
-        this.postThreads();
-        if (this.selected) await this.select(this.selected);
+        const id = this.sync.selected ?? this.initial;
+        if (id && m.get(id)) await this.select(id);
+        else this.postThreads();
         break;
       case 'create':
         await this.newThread();
@@ -114,96 +116,43 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'resize':
         this.size = { cols: msg.cols, rows: msg.rows };
-        if (msg.id === this.selected) m.get(msg.id)!.resize(msg.cols, msg.rows);
+        if (msg.id === this.sync.selected) m.get(msg.id)!.resize(msg.cols, msg.rows);
         break;
       case 'ack':
-        if (msg.id === this.selected) this.ack(msg.chars);
+        this.sync.ack(msg.id, msg.chars);
         break;
     }
   }
 
   private async select(id: string): Promise<void> {
-    const m = this.manager;
-    const t = m?.get(id);
-    if (!m || !t) return;
-    this.resetFlow();
-    this.selected = id;
-    this.updateWatched();
-    this.postThreads();
+    const t = this.manager?.get(id);
+    if (!t) return;
     if (!this.attached.has(id)) {
       this.attached.add(id);
-      t.onData((seq, data) => this.onThreadData(id, seq, data));
+      t.onData((seq, data) => this.sync.data(id, seq, data));
     }
     t.resize(this.size.cols, this.size.rows);
-    this.syncing = true;
-    const snap = await t.snapshot();
-    if (this.selected !== id) return;
-    this.post({ type: 'snapshot', id, seq: snap.seq, data: snap.data });
-    this.syncing = false;
-    for (const h of this.held) if (h.seq > snap.seq) this.queueData(h.seq, h.data);
-    this.held = [];
+    const synced = this.sync.select(id);
+    this.updateWatched();
+    this.postThreads();
+    await synced;
   }
 
   private async close(id: string): Promise<void> {
     const m = this.manager!;
     const ids = m.list().map((t) => t.id);
     const i = ids.indexOf(id);
+    const wasSelected = this.sync.selected === id;
+    if (wasSelected) this.sync.clear();
     this.attached.delete(id);
     await m.close(id);
-    if (this.selected === id) {
-      const next = ids[i + 1] ?? ids[i - 1];
-      this.selected = null;
-      this.resetFlow();
-      if (next && next !== id) await this.select(next);
-      else this.postThreads();
-    }
-  }
-
-  private onThreadData(id: string, seq: number, data: string): void {
-    if (id !== this.selected) return;
-    if (this.syncing) this.held.push({ seq, data });
-    else this.queueData(seq, data);
-  }
-
-  private queueData(seq: number, data: string): void {
-    this.batch += data;
-    this.batchSeq = seq;
-    this.batchTimer ??= setTimeout(() => this.flush(), BATCH_MS);
-  }
-
-  private flush(): void {
-    this.batchTimer = null;
-    if (!this.selected || !this.batch) return;
-    const data = this.batch;
-    this.batch = '';
-    this.unacked += data.length;
-    this.post({ type: 'data', id: this.selected, seq: this.batchSeq, data });
-    if (!this.paused && this.unacked > HIGH_WATER) {
-      this.paused = true;
-      this.manager?.get(this.selected)?.pause();
-    }
-  }
-
-  private ack(chars: number): void {
-    this.unacked = Math.max(0, this.unacked - chars);
-    if (this.paused && this.unacked < LOW_WATER && this.selected) {
-      this.paused = false;
-      this.manager?.get(this.selected)?.resume();
-    }
-  }
-
-  private resetFlow(): void {
-    if (this.batchTimer) clearTimeout(this.batchTimer);
-    this.batchTimer = null;
-    this.batch = '';
-    this.held = [];
-    this.unacked = 0;
-    if (this.paused && this.selected) this.manager?.get(this.selected)?.resume();
-    this.paused = false;
+    const next = ids[i + 1] ?? ids[i - 1];
+    if (wasSelected && next) await this.select(next);
+    else this.postThreads();
   }
 
   private updateWatched(): void {
-    const watched = this.view?.visible && vscode.window.state.focused ? this.selected : null;
+    const watched = this.view?.visible && vscode.window.state.focused ? this.sync.selected : null;
     this.manager?.setWatched(watched);
   }
 
@@ -217,7 +166,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private postThreads(): void {
-    if (this.manager) this.post({ type: 'threads', threads: this.manager.list(), selected: this.selected });
+    if (this.manager) this.post({ type: 'threads', threads: this.manager.list(), selected: this.sync.selected });
   }
 
   private post(msg: HostMsg): void {
@@ -233,7 +182,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
 <link rel="stylesheet" href="${src('xterm.css')}">
 <link rel="stylesheet" href="${src('webview.css')}">
 </head><body>
-<ul id="list" role="listbox" aria-label="Terminal threads"></ul>
+<ul id="list" aria-label="Terminal threads"></ul>
 <p id="empty" hidden>No threads. Use + to start one.</p>
 <div id="term"></div>
 <script nonce="${nonce}" src="${src('webview.js')}"></script>

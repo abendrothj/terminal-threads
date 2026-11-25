@@ -1,6 +1,6 @@
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import type { HostMsg, ViewMsg } from '../src/protocol.ts';
+import { HISTORY_LINES, type HostMsg, type ViewMsg } from '../src/protocol.ts';
 import type { ThreadInfo } from '../src/manager.ts';
 
 declare function acquireVsCodeApi(): { postMessage(msg: ViewMsg): void };
@@ -30,6 +30,7 @@ function theme(): ITheme {
 }
 
 const term = new Terminal({
+  scrollback: HISTORY_LINES,
   fontFamily: css('--vscode-editor-font-family') ?? 'monospace',
   fontSize: parseInt(css('--vscode-editor-font-size') ?? '13', 10),
   theme: theme(),
@@ -57,8 +58,7 @@ function render(threads: ThreadInfo[]): void {
     li.dataset.vscodeContext = JSON.stringify({ webviewSection: 'thread', threadId: t.id, preventDefaultContextMenuItems: true });
     const row = document.createElement('button');
     row.className = 'row';
-    row.setAttribute('role', 'option');
-    row.setAttribute('aria-selected', String(t.id === selected));
+    if (t.id === selected) row.setAttribute('aria-current', 'true');
     row.title = t.title;
     const name = document.createElement('span');
     name.className = 'name';
@@ -67,14 +67,17 @@ function render(threads: ThreadInfo[]): void {
     if (t.waiting) {
       const dot = document.createElement('span');
       dot.className = 'dot';
-      dot.setAttribute('aria-label', 'waiting');
-      row.append(dot);
+      dot.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'sr-only';
+      label.textContent = ' (waiting)';
+      row.append(dot, label);
     }
     row.addEventListener('click', () => vscode.postMessage({ type: 'select', id: t.id }));
     const close = document.createElement('button');
     close.className = 'close';
     close.textContent = '×';
-    close.setAttribute('aria-label', 'Close thread');
+    close.setAttribute('aria-label', `Close ${t.title}`);
     close.addEventListener('click', () => vscode.postMessage({ type: 'close', id: t.id }));
     li.append(row, close);
     return li;

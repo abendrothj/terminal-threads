@@ -113,3 +113,23 @@ test('huge burst stays bounded', async () => {
   assert.ok(saved.history.split('\n').length <= 5000 + 24);
   assert.ok(saved.history.includes('200000'));
 });
+
+test('a restarted shell starts in the last directory', async () => {
+  const t = make();
+  await waitFor(() => t.title.includes(' — '));
+  t.write('cd /tmp\r');
+  await waitFor(() => t.lastDir === realpathSync('/tmp'));
+  t.write('exit\r');
+  await waitFor(async () => (await snapText(t)).includes('shell exited'));
+  t.write('\r');
+  await sleep(300);
+  t.write('echo "here=$(pwd -P)"\r');
+  await waitFor(async () => (await snapText(t)).includes(`here=${realpathSync('/tmp')}`));
+});
+
+test('Ctrl-D ends the shell like exit', async () => {
+  const t = make();
+  await waitFor(() => t.title.includes(' — '));
+  t.write('\x04');
+  await waitFor(async () => (await snapText(t)).includes('shell exited, press Enter to restart'));
+});

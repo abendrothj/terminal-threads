@@ -1,12 +1,21 @@
 import { execFile } from 'node:child_process';
+import { hostname } from 'node:os';
 import { basename } from 'node:path';
 
 const TITLE_PART_MAX = 25;
 
+// A shell that ssh-ed elsewhere reports the remote host's folder; only local paths count.
+function isLocalHost(host: string): boolean {
+  const h = host.toLowerCase();
+  const local = hostname().toLowerCase();
+  return h === '' || h === 'localhost' || h === local || h === local.split('.')[0];
+}
+
 export function parseOsc7(data: string): string | null {
   try {
     const url = new URL(data);
-    return url.protocol === 'file:' ? decodeURIComponent(url.pathname) : null;
+    if (url.protocol !== 'file:' || !isLocalHost(url.hostname)) return null;
+    return decodeURIComponent(url.pathname);
   } catch {
     return null;
   }

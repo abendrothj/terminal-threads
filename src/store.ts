@@ -85,7 +85,12 @@ export class ThreadStore {
   private async writeAtomic(file: string, data: string): Promise<void> {
     await mkdir(dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.${tmpCounter++}.tmp`;
-    await writeFile(tmp, data);
-    await rename(tmp, file);
+    try {
+      await writeFile(tmp, data);
+      await rename(tmp, file);
+    } catch (e) {
+      await rm(tmp, { force: true });
+      throw e;
+    }
   }
 }

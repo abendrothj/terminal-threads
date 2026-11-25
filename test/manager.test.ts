@@ -9,7 +9,7 @@ import { ThreadManager } from '../src/manager.ts';
 import { ThreadStore } from '../src/store.ts';
 
 const cleanup: (() => Promise<unknown>)[] = [];
-after(async () => { for (const c of cleanup.reverse()) await c(); });
+after(async () => { for (const c of cleanup.reverse()) await c().catch(() => {}); });
 
 async function tempDir(prefix: string): Promise<string> {
   const d = realpathSync(await mkdtemp(join(tmpdir(), prefix)));
@@ -108,4 +108,34 @@ test('close removes history and index entry', async () => {
   assert.deepEqual(m.list().map((t) => t.id), [b]);
   assert.deepEqual((await readIndex(store)).map((t: { id: string }) => t.id), [b]);
   assert.ok(!(await readdir(join(store, 'threads'))).includes(`${a}.json`));
+});
+
+test('an unreadable history file does not stop the other threads restoring', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const gone = join(home, 'deleted');
+  await mkdir(join(store, 'threads', 'bad.json'), { recursive: true });
+  await writeFile(join(store, 'index.json'), JSON.stringify({ version: 1, threads: [
+    { id: 'bad', customName: null, startDir: home, lastDir: home },
+    { id: 'good', customName: 'kept', startDir: home, lastDir: gone },
+  ] }));
+  const m = manager(store, home);
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await m.restore();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(m.list().map((t) => t.id), ['bad', 'good']);
+  assert.ok((await snap(m, 'bad')).includes('── session ended ──'));
+  console.warn = () => {};
+  try {
+    await m.saveAll();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual((await readIndex(store)).map((t: { id: string }) => t.id), ['bad', 'good']);
+  assert.ok(!(await readdir(join(store, 'threads'))).some((f) => f.endsWith('.tmp')));
+  assert.ok((await readdir(join(store, 'threads'))).includes('good.json'));
 });

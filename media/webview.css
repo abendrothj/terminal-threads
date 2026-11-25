@@ -20,6 +20,7 @@ body { display: flex; flex-direction: column; }
 .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-notificationsInfoIcon-foreground, var(--vscode-focusBorder)); }
 .close { flex: none; padding: 0 8px; opacity: 0.6; font-size: 1.1em; }
 .close:hover, .close:focus-visible { opacity: 1; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 #empty { padding: 8px; opacity: 0.8; }
 #term { flex: 1; min-height: 0; padding: 2px 0 0 6px; }
 #term[hidden] { display: none; }
