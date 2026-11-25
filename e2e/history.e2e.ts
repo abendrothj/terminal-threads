@@ -2,19 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Frame, Page } from 'playwright-core';
-import { historyFiles, launchVSCode, openThreads, screenText, sleep, typeIn, waitFor, writeUserSettings } from './vscode.ts';
-
-async function rightClick(page: Page, frame: Frame, item: string): Promise<void> {
-  await frame.click('#list li.selected .row', { button: 'right' });
-  await page.waitForSelector('.context-view .monaco-menu .action-label', { timeout: 10_000 });
-  // Pick by keyboard: on Linux, VS Code's custom menu ignores a synthetic click on the item.
-  const labels = await page.$$eval('.context-view .monaco-menu .action-label', (e) => e.map((x) => x.textContent?.trim()));
-  const index = labels.indexOf(item);
-  if (index < 0) throw new Error(`menu has no "${item}": ${JSON.stringify(labels)}`);
-  for (let i = 0; i <= index; i++) await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-}
+import { historyFiles, launchVSCode, threadMenu, openThreads, screenText, sleep, typeIn, waitFor, writeUserSettings } from './vscode.ts';
 
 test('Clear History removes earlier output from the screen and the disk at once', async () => {
   const vs = await launchVSCode({ settings: { 'terminalThreads.historyEncryption': 'off' } });
@@ -22,7 +10,7 @@ test('Clear History removes earlier output from the screen and the disk at once'
     const frame = await openThreads(vs.page);
     await typeIn(vs.page, frame, 'echo SECRET-$((40+2))\r');
     await waitFor(() => historyFiles(vs.profile).some((f) => readFileSync(f, 'utf8').includes('SECRET-42')), 15_000, 'secret saved');
-    await rightClick(vs.page, frame, 'Clear History');
+    await threadMenu(vs.page, frame, '#list li.selected .row', 'Clear History');
     await waitFor(async () => !(await screenText(frame)).includes('SECRET-42'), 10_000, 'screen cleared');
     assert.ok(!historyFiles(vs.profile).some((f) => readFileSync(f, 'utf8').includes('SECRET-42')), 'secret still on disk');
   } finally {

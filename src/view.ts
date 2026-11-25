@@ -115,6 +115,14 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     await m.setSaveHistory(saveSetting());
   }
 
+  // Right-click → Move Up / Move Down (the keyboard way to reorder).
+  async moveThread(id: unknown, delta: number): Promise<void> {
+    await this.ready;
+    const m = this.manager;
+    if (!m || typeof id !== 'string' || !m.get(id)) return;
+    await m.move(id, m.list().findIndex((t) => t.id === id) + delta);
+  }
+
   // Right-click → Clear History. Refused while a full-screen program owns the screen.
   async clearThreadHistory(id: unknown): Promise<void> {
     await this.ready;
@@ -210,6 +218,9 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       case 'resize':
         this.size = { cols: msg.cols, rows: msg.rows };
         if (msg.id === this.sync.selected) m.get(msg.id)!.resize(msg.cols, msg.rows);
+        break;
+      case 'move':
+        await m.move(msg.id, msg.index);
         break;
       case 'ack':
         this.sync.ack(msg.id, msg.chars);

@@ -1,5 +1,6 @@
 // Drives a real VS Code with this extension in development mode, in a throwaway profile.
 // VSCODE_PATH points at an installed VS Code executable; otherwise a pinned build is downloaded.
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -49,6 +50,10 @@ export interface VS {
 export interface LaunchOptions {
   settings?: Record<string, unknown>;
   workspaceSettings?: Record<string, unknown>;
+  // Remote runs: open this vscode-remote:// folder, without the local dev extension, after
+  // installing these marketplace extensions (e.g. Remote-SSH) into the profile.
+  folderUri?: string;
+  extensions?: string[];
 }
 
 export function writeUserSettings(profile: string, settings: Record<string, unknown>): void {
@@ -63,17 +68,23 @@ export async function launchVSCode(opts: LaunchOptions = {}): Promise<VS> {
   mkdirSync(join(folder, '.vscode'), { recursive: true });
   if (opts.workspaceSettings) writeFileSync(join(folder, '.vscode', 'settings.json'), JSON.stringify(opts.workspaceSettings));
   const exe = await vscodeExecutable();
+  if (opts.extensions?.length) {
+    const [cli, ...cliArgs] = testElectron.resolveCliArgsFromVSCodeExecutablePath(exe);
+    for (const id of opts.extensions) {
+      execFileSync(cli!, [...cliArgs, `--user-data-dir=${join(profile, 'user')}`, `--extensions-dir=${join(profile, 'ext')}`, '--install-extension', id], { stdio: 'pipe' });
+    }
+  }
 
   const vs = {} as VS;
   const start = async () => {
     const args = [
       `--user-data-dir=${join(profile, 'user')}`, `--extensions-dir=${join(profile, 'ext')}`,
       '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--new-window',
-      `--extensionDevelopmentPath=${EXT}`,
+      ...(opts.folderUri ? [] : [`--extensionDevelopmentPath=${EXT}`]),
       // CI Linux has no OS keyring; VS Code's basic store lets history saving be tested there.
       ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu-sandbox', '--password-store=basic'] : []),
       ...(process.env.TT_E2E_ARGS ? process.env.TT_E2E_ARGS.split(' ') : []),
-      folder,
+      opts.folderUri ? `--folder-uri=${opts.folderUri}` : folder,
     ];
     vs.app = await playwright._electron.launch({ executablePath: exe, args, timeout: 120_000 });
     vs.page = await vs.app.firstWindow();
@@ -171,4 +182,16 @@ function dumpLogs(profile: string): void {
     const lines = readFileSync(f, 'utf8').split('\n').filter((l) => /terminal-threads|secret|keyring|password|safeStorage|encryption|libsecret|node-pty|pty\.node/i.test(l) && !/AgentHost/.test(l));
     if (lines.length) console.log(`--- ${f.split('/logs/')[1]}\n${lines.slice(-25).join('\n')}`);
   }
+}
+
+// Right-click a thread row and pick a menu item by keyboard (Linux's custom menu ignores synthetic
+// clicks on items). Separators are skipped by the arrow keys, so they're left out of the count.
+export async function threadMenu(page: Page, frame: Frame, rowSelector: string, item: string): Promise<void> {
+  await frame.click(rowSelector, { button: 'right' });
+  await page.waitForSelector('.context-view .monaco-menu .action-label', { timeout: 10_000 });
+  const labels = await page.$$eval('.context-view .monaco-menu .action-item:not(.disabled) .action-label:not(.separator)', (e) => e.map((x) => x.textContent?.trim()));
+  const index = labels.indexOf(item);
+  if (index < 0) throw new Error(`menu has no "${item}": ${JSON.stringify(labels)}`);
+  for (let i = 0; i <= index; i++) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
 }

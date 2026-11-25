@@ -9,6 +9,7 @@ test('accepts well-formed view messages', () => {
   assert.deepEqual(parseViewMsg({ type: 'input', id: 'a', data: 'ls\r' }), { type: 'input', id: 'a', data: 'ls\r' });
   assert.deepEqual(parseViewMsg({ type: 'resize', id: 'a', cols: 100, rows: 30 }), { type: 'resize', id: 'a', cols: 100, rows: 30 });
   assert.deepEqual(parseViewMsg({ type: 'ack', id: 'a', chars: 0 }), { type: 'ack', id: 'a', chars: 0 });
+  assert.deepEqual(parseViewMsg({ type: 'move', id: 'a', index: 2 }), { type: 'move', id: 'a', index: 2 });
 });
 
 test('drops malformed view messages', () => {
@@ -19,6 +20,7 @@ test('drops malformed view messages', () => {
     { type: 'ready', cols: 0, rows: 24 }, { type: 'resize', id: 'a', cols: 1.5, rows: 2 },
     { type: 'ack', id: 'a', chars: -1 },
     { type: 'rename', id: 'a' },
+    { type: 'move', id: 'a' }, { type: 'move', id: 'a', index: -1 }, { type: 'move', id: 'a', index: 1.5 },
   ]) assert.equal(parseViewMsg(bad), null, JSON.stringify(bad));
 });
 

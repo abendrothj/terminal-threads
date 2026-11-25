@@ -277,3 +277,23 @@ test('a key that arrives later enables saving', async () => {
   await m.saveDirty();
   assert.ok((await new ThreadStore(store, KEY).loadHistory(a))?.history.includes('later-5'));
 });
+
+test('move reorders threads and the order persists', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const m1 = manager(store, home);
+  const a = await m1.create();
+  const b = await m1.create();
+  const c = await m1.create();
+  await m1.move(c, 0);
+  assert.deepEqual(m1.list().map((t) => t.id), [c, a, b]);
+  await m1.move(c, 99);
+  assert.deepEqual(m1.list().map((t) => t.id), [a, b, c]);
+  await m1.move(a, -5);
+  assert.deepEqual(m1.list().map((t) => t.id), [a, b, c]);
+  await m1.move(a, 1);
+  await m1.dispose();
+  const m2 = manager(store, home);
+  await m2.restore();
+  assert.deepEqual(m2.list().map((t) => t.id), [b, a, c]);
+});

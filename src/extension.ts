@@ -10,6 +10,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(VIEW_ID, p, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('terminalThreads.new', () => p.newThread()),
     vscode.commands.registerCommand('terminalThreads.rename', (ctx?: { threadId?: unknown }) => p.renameThread(ctx?.threadId)),
+    vscode.commands.registerCommand('terminalThreads.moveUp', (ctx?: { threadId?: unknown }) => p.moveThread(ctx?.threadId, -1)),
+    vscode.commands.registerCommand('terminalThreads.moveDown', (ctx?: { threadId?: unknown }) => p.moveThread(ctx?.threadId, 1)),
     vscode.commands.registerCommand('terminalThreads.clearHistory', (ctx?: { threadId?: unknown }) => p.clearThreadHistory(ctx?.threadId)),
   );
 }

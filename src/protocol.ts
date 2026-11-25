@@ -16,7 +16,8 @@ export type ViewMsg =
   | { type: 'create' }
   | { type: 'input'; id: string; data: string }
   | { type: 'resize'; id: string; cols: number; rows: number }
-  | { type: 'ack'; id: string; chars: number };
+  | { type: 'ack'; id: string; chars: number }
+  | { type: 'move'; id: string; index: number };
 
 const str = (v: unknown): v is string => typeof v === 'string';
 const pos = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;
@@ -40,6 +41,8 @@ export function parseViewMsg(raw: unknown): ViewMsg | null {
       return str(m.id) && pos(m.cols) && pos(m.rows) ? { type: 'resize', id: m.id, cols: m.cols, rows: m.rows } : null;
     case 'ack':
       return str(m.id) && nonNeg(m.chars) ? { type: 'ack', id: m.id, chars: m.chars } : null;
+    case 'move':
+      return str(m.id) && nonNeg(m.index) ? { type: 'move', id: m.id, index: m.index } : null;
     default:
       return null;
   }

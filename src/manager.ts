@@ -146,6 +146,18 @@ export class ThreadManager {
     this.threads.forEach((t) => { t.dirty = true; });
   }
 
+  // New position for a thread (clamped to the list); the order is saved with the index.
+  async move(id: string, toIndex: number): Promise<void> {
+    const from = this.metas.findIndex((m) => m.id === id);
+    if (from < 0) return;
+    const to = Math.max(0, Math.min(this.metas.length - 1, toIndex));
+    if (to === from) return;
+    const [meta] = this.metas.splice(from, 1);
+    this.metas.splice(to, 0, meta!);
+    this.changed();
+    await this.enqueue(() => this.deps.store.saveIndex(this.metas));
+  }
+
   setWatched(id: string | null): void {
     for (const [tid, t] of this.threads) t.waiting.setWatched(tid === id);
     this.changed();

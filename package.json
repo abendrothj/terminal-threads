@@ -57,6 +57,14 @@
       {
         "command": "terminalThreads.clearHistory",
         "title": "Clear History"
+      },
+      {
+        "command": "terminalThreads.moveUp",
+        "title": "Move Up"
+      },
+      {
+        "command": "terminalThreads.moveDown",
+        "title": "Move Down"
       }
     ],
     "menus": {
@@ -70,11 +78,23 @@
       "webview/context": [
         {
           "command": "terminalThreads.rename",
-          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'"
+          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'",
+          "group": "1_thread@1"
         },
         {
           "command": "terminalThreads.clearHistory",
-          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'"
+          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'",
+          "group": "1_thread@2"
+        },
+        {
+          "command": "terminalThreads.moveUp",
+          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'",
+          "group": "2_move@1"
+        },
+        {
+          "command": "terminalThreads.moveDown",
+          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'",
+          "group": "2_move@2"
         }
       ],
       "commandPalette": [
@@ -84,6 +104,14 @@
         },
         {
           "command": "terminalThreads.clearHistory",
+          "when": "false"
+        },
+        {
+          "command": "terminalThreads.moveUp",
+          "when": "false"
+        },
+        {
+          "command": "terminalThreads.moveDown",
           "when": "false"
         }
       ]
@@ -125,7 +153,7 @@
   },
   "scripts": {
     "build": "node esbuild.mjs",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test --test-timeout=60000 test/*.test.ts",
     "typecheck": "tsc",
     "package": "for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do vsce package --target $t || exit 1; done",
     "e2e": "node --test --test-concurrency=1 e2e/*.e2e.ts"

@@ -86,44 +86,71 @@ new ResizeObserver(() => fit.fit()).observe(termEl);
 term.onData((data) => { if (selected) vscode.postMessage({ type: 'input', id: selected, data }); });
 term.onResize(({ cols, rows }) => { if (selected) vscode.postMessage({ type: 'resize', id: selected, cols, rows }); });
 
+// One row element per thread, created once and updated in place: rebuilding the list on every
+// update (titles change many times a second while a program runs) would cancel a drag in progress
+// and drop keyboard focus.
+const rows = new Map<string, HTMLLIElement>();
+
+function createRow(id: string): HTMLLIElement {
+  const li = document.createElement('li');
+  li.dataset.id = id;
+  li.dataset.vscodeContext = JSON.stringify({ webviewSection: 'thread', threadId: id, preventDefaultContextMenuItems: true });
+  const row = document.createElement('button');
+  row.className = 'row';
+  const name = document.createElement('span');
+  name.className = 'name';
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.className = 'sr-only';
+  label.textContent = ' (waiting)';
+  row.append(name, dot, label);
+  row.addEventListener('click', () => vscode.postMessage({ type: 'select', id }));
+  const close = document.createElement('button');
+  close.className = 'close';
+  close.textContent = '×';
+  close.addEventListener('click', () => vscode.postMessage({ type: 'close', id }));
+  li.append(row, close);
+  // Drag a row onto another to move it there.
+  li.draggable = true;
+  li.addEventListener('dragstart', (e) => { e.dataTransfer?.setData('text/x-thread', id); li.classList.add('dragging'); });
+  li.addEventListener('dragend', () => li.classList.remove('dragging'));
+  li.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer?.types.includes('text/x-thread')) return;
+    e.preventDefault();
+    li.classList.add('drop-target');
+  });
+  li.addEventListener('dragleave', () => li.classList.remove('drop-target'));
+  li.addEventListener('drop', (e) => {
+    e.preventDefault();
+    li.classList.remove('drop-target');
+    const moved = e.dataTransfer?.getData('text/x-thread');
+    const index = [...list.children].indexOf(li);
+    if (moved && moved !== id) vscode.postMessage({ type: 'move', id: moved, index });
+  });
+  return li;
+}
+
 function render(threads: ThreadInfo[]): void {
-  // The list is rebuilt on every update; put keyboard focus back on the same control.
-  const active = document.activeElement;
-  const focusLi = active instanceof HTMLElement && list.contains(active) ? active.closest('li') : null;
-  const focusId = focusLi?.dataset.id;
-  const focusClass = active instanceof HTMLElement ? active.className : '';
-  list.replaceChildren(...threads.map((t) => {
-    const li = document.createElement('li');
-    li.className = t.id === selected ? 'selected' : '';
-    li.dataset.id = t.id;
-    li.dataset.vscodeContext = JSON.stringify({ webviewSection: 'thread', threadId: t.id, preventDefaultContextMenuItems: true });
-    const row = document.createElement('button');
-    row.className = 'row';
-    if (t.id === selected) row.setAttribute('aria-current', 'true');
+  const ids = new Set(threads.map((t) => t.id));
+  for (const [id, li] of rows) if (!ids.has(id)) { li.remove(); rows.delete(id); }
+  threads.forEach((t, i) => {
+    let li = rows.get(t.id);
+    if (!li) rows.set(t.id, (li = createRow(t.id)));
+    const isSelected = t.id === selected;
+    li.classList.toggle('selected', isSelected);
+    const row = li.querySelector<HTMLElement>('.row')!;
+    if (isSelected) row.setAttribute('aria-current', 'true');
+    else row.removeAttribute('aria-current');
     row.title = t.title;
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = t.title;
-    row.append(name);
-    if (t.waiting) {
-      const dot = document.createElement('span');
-      dot.className = 'dot';
-      dot.setAttribute('aria-hidden', 'true');
-      const label = document.createElement('span');
-      label.className = 'sr-only';
-      label.textContent = ' (waiting)';
-      row.append(dot, label);
-    }
-    row.addEventListener('click', () => vscode.postMessage({ type: 'select', id: t.id }));
-    const close = document.createElement('button');
-    close.className = 'close';
-    close.textContent = '×';
-    close.setAttribute('aria-label', `Close ${t.title}`);
-    close.addEventListener('click', () => vscode.postMessage({ type: 'close', id: t.id }));
-    li.append(row, close);
-    return li;
-  }));
-  if (focusId) list.querySelector<HTMLElement>(`li[data-id="${CSS.escape(focusId)}"] .${focusClass}`)?.focus();
+    li.querySelector('.name')!.textContent = t.title;
+    li.querySelector<HTMLElement>('.dot')!.hidden = !t.waiting;
+    li.querySelector<HTMLElement>('.sr-only')!.hidden = !t.waiting;
+    li.querySelector('.close')!.setAttribute('aria-label', `Close ${t.title}`);
+    // Only move a row when the order really changed; moving it mid-drag would cancel the drag.
+    if (list.children[i] !== li) list.insertBefore(li, list.children[i] ?? null);
+  });
   empty.hidden = threads.length > 0;
   termEl.hidden = threads.length === 0;
 }
