@@ -160,3 +160,11 @@ test('clear history also removes output not yet processed', async () => {
   assert.equal(await t.clearHistory(), true);
   assert.ok(!(await t.capture()).history.includes('PENDING-SECRET'));
 });
+
+test('typing before the shell starts still finds the folder', async () => {
+  // The echo of typed-ahead input arrives before the shell has started; node-pty then reports its
+  // fallback (the spawn path), which must not be taken as the shell's name.
+  const t = make();
+  t.write('sleep 0.5; cd /tmp\r');
+  await waitFor(() => t.lastDir === realpathSync('/tmp') && t.title.startsWith('tmp — '));
+});

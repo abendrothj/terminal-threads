@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readlink } from 'node:fs/promises';
+import { readFile, readlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { basename } from 'node:path';
 
@@ -41,6 +41,19 @@ export function shellCwd(pid: number): Promise<string | null> {
 // in the moment after a program exits.
 export function programName(raw: string | undefined): string | null {
   return raw ? basename(raw) || raw : null;
+}
+
+// A process's own name, in node-pty's format: macOS's accounting name (`ucomm`, what node-pty's
+// sysctl returns), Linux's argv[0] basename. One call per shell start.
+export function processName(pid: number): Promise<string | null> {
+  if (process.platform === 'linux') {
+    return readFile(`/proc/${pid}/cmdline`, 'utf8').then((c) => programName(c.split('\0')[0]), () => null);
+  }
+  return new Promise((resolve) => {
+    execFile('/bin/ps', ['-o', 'ucomm=', '-p', String(pid)], { timeout: 2000 }, (err, stdout) => {
+      resolve(err ? null : stdout.trim() || null);
+    });
+  });
 }
 
 const cut = (s: string) => (s.length > TITLE_PART_MAX ? s.slice(0, TITLE_PART_MAX - 1) + '…' : s);

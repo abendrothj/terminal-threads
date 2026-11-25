@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { spawn } from 'node:child_process';
-import { formatTitle, parseLsofCwd, parseOsc7, programName, shellCwd } from '../src/cwd.ts';
+import { formatTitle, parseLsofCwd, parseOsc7, processName, programName, shellCwd } from '../src/cwd.ts';
 
 test('parseOsc7 decodes local file URLs and rejects others', () => {
   assert.equal(parseOsc7(`file://${hostname()}/home/me/My%20Dir`), '/home/me/My Dir');
@@ -51,4 +51,9 @@ test('programName reduces paths to a name and drops empty values', () => {
   assert.equal(programName('/usr/local/bin/node'), 'node');
   assert.equal(programName(undefined), null);
   assert.equal(programName(''), null);
+});
+
+test('processName names a live process the way node-pty does', async () => {
+  assert.equal(await processName(process.pid), 'node');
+  assert.equal(await processName(2 ** 22 + 12345), null);
 });

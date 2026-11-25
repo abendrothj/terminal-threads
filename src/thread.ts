@@ -5,7 +5,7 @@ import type { IPty } from 'node-pty';
 import type { Terminal } from '@xterm/headless';
 import type { SerializeAddon } from '@xterm/addon-serialize';
 import { captureHistory, createHeadless, type SavedHistory } from './history.ts';
-import { formatTitle, parseOsc7, programName, shellCwd } from './cwd.ts';
+import { formatTitle, parseOsc7, processName, programName, shellCwd } from './cwd.ts';
 import { WaitingTracker } from './waiting.ts';
 
 export interface ThreadOptions {
@@ -142,6 +142,7 @@ export class Thread {
 
   private spawn(cwd: string): void {
     const { shell, args, env, cols, rows } = this.opts;
+    this.shellName = null;
     const pty = nodePty.spawn(shell, args, { name: 'xterm-256color', cwd, env, cols: this.term.cols || cols, rows: this.term.rows || rows });
     this.pty = pty;
     pty.onData((data) => this.emit(data));
@@ -187,9 +188,11 @@ export class Thread {
   private async refresh(): Promise<void> {
     const pty = this.pty;
     if (!pty || this.disposed) return;
-    this.program = programName(pty.process) ?? this.program;
-    // macOS /bin/sh execs bash, so the shell's real name is the first one seen.
-    this.shellName ??= this.program;
+    const raw = pty.process;
+    this.program = programName(raw) ?? this.program;
+    // Until the shell has started, node-pty reports the spawn path itself; after that, ask for the
+    // shell's own name (macOS /bin/sh runs as bash, so it can't be derived from the path).
+    if (this.shellName === null && raw && raw !== this.opts.shell) this.shellName = (await processName(pty.pid)) ?? programName(raw);
     const shellInFront = this.program === this.shellName || this.program === basename(this.opts.shell);
     if (shellInFront) {
       const wait = this.lastLookup + LOOKUP_INTERVAL_MS - Date.now();
