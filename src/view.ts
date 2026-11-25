@@ -19,6 +19,9 @@ const loginShell = () => {
   }
 };
 const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
+// Machine-scoped in the manifest, so a workspace's .vscode/settings.json can't turn encryption off.
+const ENCRYPT_KEY = 'terminalThreads.historyEncryption';
+const encryptSetting = () => vscode.workspace.getConfiguration().get<string>(ENCRYPT_KEY, 'on') !== 'off';
 export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private readonly context: vscode.ExtensionContext;
   private manager: ThreadManager | null = null;
@@ -44,6 +47,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (FONT_KEYS.some((k) => e.affectsConfiguration(k))) this.postFont();
         if (e.affectsConfiguration(SAVE_KEY)) void this.manager?.setSaveHistory(saveSetting());
+        if (e.affectsConfiguration(ENCRYPT_KEY)) this.manager?.setEncryption(encryptSetting());
       }),
     );
   }
@@ -114,10 +118,11 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     const storage = this.context.storageUri ?? this.context.globalStorageUri;
     const secrets = this.context.secrets;
     const found = await historyKey(secrets);
-    if (!found) {
+    // The key is still read with encryption off, so existing encrypted history can be converted.
+    if (!found && encryptSetting()) {
       void vscode.window.showWarningMessage("Terminal Threads couldn't use VS Code's secret storage, so thread history won't be saved this session.");
     }
-    const store = new ThreadStore(storage.fsPath, found?.key ?? null);
+    const store = new ThreadStore(storage.fsPath, found?.key ?? null, encryptSetting());
     await store.secure().catch((e) => console.warn('terminal-threads: could not tighten storage permissions', e));
     // VS Code drops a secret it can't decrypt, so a lost key looks like a first run; say so once.
     if (found?.created && (await store.hasEncryptedHistory())) {
@@ -142,6 +147,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       rows: this.size.rows,
       saveHistory: saveSetting(),
       keyAvailable: found !== null,
+      encrypt: encryptSetting(),
     });
     this.manager = m;
     m.onChange(() => this.postThreads());

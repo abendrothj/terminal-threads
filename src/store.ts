@@ -36,10 +36,18 @@ export class ThreadStore {
   private readonly dir: string;
   // Null when secret storage is unavailable: nothing is saved and encrypted files are left alone.
   private key: Buffer | null;
+  // Off (the user's choice): history is written as plain, owner-only JSON. Encrypted files are still
+  // read while the key exists, and rewritten plain on their next save.
+  private encrypt: boolean;
 
-  constructor(dir: string, key: Buffer | null) {
+  constructor(dir: string, key: Buffer | null, encrypt = true) {
     this.dir = dir;
     this.key = key;
+    this.encrypt = encrypt;
+  }
+
+  setEncrypt(on: boolean): void {
+    this.encrypt = on;
   }
 
   // Another window may create the key first; later saves use the key that is actually stored.
@@ -78,8 +86,10 @@ export class ThreadStore {
   }
 
   async saveHistory(id: string, h: SavedHistory): Promise<void> {
+    const file = this.historyPath(id);
+    if (!this.encrypt) return this.writeAtomic(file, JSON.stringify(h));
     if (!this.key) throw new Error('terminal-threads: no history key, not saving');
-    return this.writeAtomic(this.historyPath(id), JSON.stringify(seal(this.key, id, JSON.stringify(h))));
+    return this.writeAtomic(file, JSON.stringify(seal(this.key, id, JSON.stringify(h))));
   }
 
   // Round 1 wrote with the default umask; make existing folders and files owner-only.

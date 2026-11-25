@@ -25,6 +25,8 @@ export interface ManagerDeps {
   saveHistory: boolean;
   // False when secret storage gave no key: history isn't saved, and existing files are kept.
   keyAvailable?: boolean;
+  // False when the user turned encryption off: a key isn't needed to save.
+  encrypt?: boolean;
 }
 
 export class ThreadManager {
@@ -39,11 +41,17 @@ export class ThreadManager {
   private disposed: Promise<void> | null = null;
   private setting: boolean;
   private saving: boolean;
+  private encrypt: boolean;
 
   constructor(deps: ManagerDeps) {
     this.deps = deps;
     this.setting = deps.saveHistory;
-    this.saving = deps.saveHistory && deps.keyAvailable !== false;
+    this.encrypt = deps.encrypt !== false;
+    this.saving = this.canSave(deps.saveHistory);
+  }
+
+  private canSave(on: boolean): boolean {
+    return on && (!this.encrypt || this.deps.keyAvailable !== false);
   }
 
   async restore(): Promise<void> {
@@ -116,9 +124,17 @@ export class ThreadManager {
   // Only the user's setting deletes; a missing key just pauses saving.
   async setSaveHistory(on: boolean): Promise<void> {
     this.setting = on;
-    this.saving = on && this.deps.keyAvailable !== false;
+    this.saving = this.canSave(on);
     if (this.saving) this.threads.forEach((t) => { t.dirty = true; });
     if (!on) await this.enqueue(() => this.deps.store.deleteAllHistory());
+  }
+
+  // Encryption switched by the user: every file is rewritten in the new form on the next save.
+  setEncryption(on: boolean): void {
+    this.encrypt = on;
+    this.deps.store.setEncrypt(on);
+    this.saving = this.canSave(this.setting);
+    this.threads.forEach((t) => { t.dirty = true; });
   }
 
   // Another window stored a different key first: re-seal everything with the stored one.

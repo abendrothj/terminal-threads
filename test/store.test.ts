@@ -166,3 +166,28 @@ test('hasEncryptedHistory reports only encrypted thread files', async () => {
   await store.saveHistory('a', { history: 'h', frame: null });
   assert.equal(await store.hasEncryptedHistory(), true);
 });
+
+test('with encryption off, history is readable owner-only JSON, even without a key', async () => {
+  const dir = await freshDir();
+  const store = new ThreadStore(dir, null, false);
+  await store.saveHistory('a', { history: 'PLAIN-OK', frame: null });
+  const file = join(dir, 'threads', 'a.json');
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { history: 'PLAIN-OK', frame: null });
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+});
+
+test('switching encryption off and on rewrites files on the next save', async () => {
+  const dir = await freshDir();
+  const file = join(dir, 'threads', 'a.json');
+  const store = new ThreadStore(dir, KEY);
+  await store.saveHistory('a', { history: 'SECRET-9', frame: null });
+  store.setEncrypt(false);
+  const h = await store.loadHistory('a');
+  assert.deepEqual(h, { history: 'SECRET-9', frame: null });
+  await store.saveHistory('a', h!);
+  assert.ok((await readFile(file, 'utf8')).includes('SECRET-9'));
+  store.setEncrypt(true);
+  await store.saveHistory('a', (await store.loadHistory('a'))!);
+  assert.ok(!(await readFile(file, 'utf8')).includes('SECRET-9'));
+  assert.deepEqual(await store.loadHistory('a'), h);
+});

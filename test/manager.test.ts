@@ -238,3 +238,29 @@ test('rekey re-seals every thread with the stored key', async () => {
   const h = await new ThreadStore(store, winner).loadHistory(a);
   assert.ok(h?.history.includes('rekeyed-9'));
 });
+
+test('with encryption off, history is saved without a key', async () => {
+  const store = await tempDir('tt-store-');
+  const m = new ThreadManager({ store: new ThreadStore(store, null, false), defaultDir: await tempDir('tt-home-'), shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory: true, keyAvailable: false, encrypt: false });
+  cleanup.push(() => m.dispose());
+  const a = await m.create();
+  m.get(a)!.write('echo plain-$((3))\r');
+  await waitFor(async () => (await snap(m, a)).includes('plain-3'));
+  await m.saveAll();
+  assert.ok((await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('plain-3'));
+});
+
+test('turning encryption back on re-seals every thread', async () => {
+  const store = await tempDir('tt-store-');
+  const s = new ThreadStore(store, KEY, false);
+  const m = new ThreadManager({ store: s, defaultDir: await tempDir('tt-home-'), shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory: true, encrypt: false });
+  cleanup.push(() => m.dispose());
+  const a = await m.create();
+  m.get(a)!.write('echo reseal-$((4))\r');
+  await waitFor(async () => (await snap(m, a)).includes('reseal-4'));
+  await m.saveAll();
+  assert.ok((await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('reseal-4'));
+  m.setEncryption(true);
+  await m.saveDirty();
+  assert.ok(!(await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('reseal-4'));
+});

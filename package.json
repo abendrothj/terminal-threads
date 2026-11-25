@@ -105,6 +105,20 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Save each thread's history (encrypted) so it comes back after a restart. Turning this off deletes saved history; threads still come back, empty."
+        },
+        "terminalThreads.historyEncryption": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "default": "on",
+          "scope": "machine",
+          "enumDescriptions": [
+            "Encrypt saved history with a key kept in VS Code's secret storage.",
+            "Save history as readable files (owner-only). Anything printed in a thread, secrets included, is stored in plain text."
+          ],
+          "markdownDescription": "Encrypt saved thread history. `off` stores it as readable owner-only files, which is useful with Remote-SSH from several computers or without a keyring, but keeps any secrets printed in a thread in plain text. User settings only: a workspace can't change it."
         }
       }
     }
