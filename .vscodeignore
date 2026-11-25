@@ -9,3 +9,6 @@
 !node_modules/node-pty/prebuilds/darwin-arm64/**
 !node_modules/node-pty/prebuilds/linux-x64/**
 !node_modules/node-pty/prebuilds/linux-arm64/**
+!images/icon.png
+!LICENSE
+!readme.md

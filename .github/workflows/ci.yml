@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+  glibc-floor:
+    # VS Code's remote server supports glibc 2.28; check the Linux prebuild and the suite there.
+    runs-on: ubuntu-latest
+    container: almalinux:8
+    steps:
+      - run: dnf -y -q install git perl xz tar findutils procps-ng binutils
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: objdump -T node_modules/node-pty/prebuilds/linux-x64/pty.node | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+      - run: npm test
