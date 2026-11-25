@@ -137,9 +137,12 @@ export class ThreadManager {
     this.threads.forEach((t) => { t.dirty = true; });
   }
 
-  // Another window stored a different key first: re-seal everything with the stored one.
+  // A key arrived (saving was switched on, or another window stored a different key first):
+  // use it from now on and re-seal everything.
   rekey(key: Buffer): void {
     this.deps.store.setKey(key);
+    this.deps.keyAvailable = true;
+    this.saving = this.canSave(this.setting);
     this.threads.forEach((t) => { t.dirty = true; });
   }
 

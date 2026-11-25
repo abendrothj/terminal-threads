@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Frame, Page } from 'playwright-core';
-import { historyFiles, launchVSCode, openThreads, screenText, sleep, typeIn, waitFor } from './vscode.ts';
+import { historyFiles, launchVSCode, openThreads, screenText, sleep, typeIn, waitFor, writeUserSettings } from './vscode.ts';
 
 async function rightClick(page: Page, frame: Frame, item: string): Promise<void> {
   await frame.click('#list li.selected .row', { button: 'right' });
@@ -79,6 +80,43 @@ test("the view's leftover edges take a full-screen program's background", async 
     await vs.page.keyboard.press('Control+C');
     await typeIn(vs.page, frame, String.raw`printf '\033[0m\033[?1049l'` + '\r');
     await waitFor(async () => (await edges()).every((c) => c !== 'rgb(10, 20, 30)'), 10_000, 'edges back to normal');
+  } finally {
+    await vs.dispose();
+  }
+});
+
+test('with saving off nothing touches secret storage', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const secretNames = (profile: string) => {
+    const db = new DatabaseSync(join(profile, 'user', 'User', 'globalStorage', 'state.vscdb'), { readOnly: true });
+    try {
+      return (db.prepare("select key from ItemTable where key like 'secret://%terminal-threads%'").all() as { key: string }[]).map((r) => r.key);
+    } finally {
+      db.close();
+    }
+  };
+  const vs = await launchVSCode({ settings: { 'terminalThreads.saveHistory': false } });
+  try {
+    const frame = await openThreads(vs.page);
+    await typeIn(vs.page, frame, 'echo OFF-$((2+2))\r');
+    await sleep(4500);
+    assert.deepEqual(historyFiles(vs.profile), []);
+    await vs.close();
+    assert.deepEqual(secretNames(vs.profile), []);
+  } finally {
+    await vs.dispose();
+  }
+});
+
+test('turning saving on mid-session fetches the key and saves encrypted history', async () => {
+  const vs = await launchVSCode({ settings: { 'terminalThreads.saveHistory': false } });
+  try {
+    const frame = await openThreads(vs.page);
+    await typeIn(vs.page, frame, 'echo ON-$((3+3))\r');
+    writeUserSettings(vs.profile, { 'terminalThreads.saveHistory': true });
+    await waitFor(() => historyFiles(vs.profile).length > 0, 20_000, 'history saved after switching on');
+    const raw = readFileSync(historyFiles(vs.profile)[0]!, 'utf8');
+    assert.equal(JSON.parse(raw).v, 2);
   } finally {
     await vs.dispose();
   }

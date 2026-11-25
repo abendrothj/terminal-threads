@@ -117,6 +117,19 @@ export class ThreadStore {
     return false;
   }
 
+  // Startup only, before any save: temp files are leftovers from a crash mid-write (round 1 wrote
+  // them in plain text), and quarantined files older than a month are no longer worth keeping.
+  async cleanup(now = Date.now()): Promise<void> {
+    const MONTH = 30 * 86_400_000;
+    for (const dir of [this.dir, join(this.dir, 'threads')]) {
+      const files = await readdir(dir).catch((e) => (ignoreMissing(e), [] as string[]));
+      for (const f of files) {
+        const corrupt = /\.corrupt-(\d+)$/.exec(f);
+        if (f.endsWith('.tmp') || (corrupt && now - Number(corrupt[1]) > MONTH)) await rm(join(dir, f), { force: true });
+      }
+    }
+  }
+
   async deleteAllHistory(): Promise<void> {
     const threads = join(this.dir, 'threads');
     const files = await readdir(threads).catch((e) => (ignoreMissing(e), [] as string[]));

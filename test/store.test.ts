@@ -191,3 +191,19 @@ test('switching encryption off and on rewrites files on the next save', async ()
   assert.ok(!(await readFile(file, 'utf8')).includes('SECRET-9'));
   assert.deepEqual(await store.loadHistory('a'), h);
 });
+
+test('cleanup removes stale temp files and old quarantine, keeps recent quarantine and history', async () => {
+  const dir = await freshDir();
+  const now = Date.UTC(2026, 10, 25);
+  const day = 86_400_000;
+  await mkdir(join(dir, 'threads'), { recursive: true });
+  const files = {
+    keep: ['threads/a.json', 'index.json', `threads/c.json.corrupt-${now - day}`],
+    drop: ['threads/a.json.123.4.tmp', 'index.json.9.9.tmp', `threads/b.json.corrupt-${now - 40 * day}`, `index.json.corrupt-${now - 31 * day}`],
+  };
+  for (const f of [...files.keep, ...files.drop]) await writeFile(join(dir, f), '{}');
+  await new ThreadStore(dir, KEY).cleanup(now);
+  const left = [...(await readdir(dir)).filter((f) => f !== 'threads'), ...(await readdir(join(dir, 'threads'))).map((f) => `threads/${f}`)].sort();
+  assert.deepEqual(left, [...files.keep].sort());
+  await new ThreadStore(join(dir, 'missing'), KEY).cleanup(now);
+});

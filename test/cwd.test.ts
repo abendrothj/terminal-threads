@@ -57,3 +57,10 @@ test('processName names a live process the way node-pty does', async () => {
   assert.equal(await processName(process.pid), 'node');
   assert.equal(await processName(2 ** 22 + 12345), null);
 });
+
+test('shellCwd on Linux starts no process', { skip: process.platform !== 'linux' }, async () => {
+  // 200 /proc reads take a few ms; 200 process spawns would take seconds.
+  const start = performance.now();
+  for (let i = 0; i < 200; i++) await shellCwd(process.pid);
+  assert.ok(performance.now() - start < 100, `${(performance.now() - start).toFixed(1)} ms`);
+});

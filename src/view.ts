@@ -32,6 +32,8 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | null = null;
   // Thread to show when the webview first reports ready (set by init, before any webview sync).
   private initial: string | null = null;
+  private keyFetched = false;
+  private key: Buffer | null = null;
   private sizeKnown: () => void = () => {};
   private readonly viewSized = new Promise<void>((resolve) => { this.sizeKnown = resolve; });
   private size = { cols: 80, rows: 24 };
@@ -49,7 +51,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       vscode.window.onDidChangeWindowState(() => this.updateWatched()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (FONT_KEYS.some((k) => e.affectsConfiguration(k)) || e.affectsConfiguration(A11Y_KEY)) this.postFont();
-        if (e.affectsConfiguration(SAVE_KEY)) void this.manager?.setSaveHistory(saveSetting());
+        if (e.affectsConfiguration(SAVE_KEY)) void this.applySaveSetting();
         if (e.affectsConfiguration(ENCRYPT_KEY)) this.manager?.setEncryption(encryptSetting());
       }),
     );
@@ -98,6 +100,21 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     if (name !== undefined) await m.rename(id, name);
   }
 
+  // Saving switched on mid-session: the key wasn't fetched at startup, so get it now.
+  private async applySaveSetting(): Promise<void> {
+    const m = this.manager;
+    if (!m) return;
+    if (saveSetting() && !this.keyFetched) {
+      this.keyFetched = true;
+      const k = await historyKey(this.context.secrets);
+      if (k) {
+        this.key = k.key;
+        m.rekey(k.key);
+      }
+    }
+    await m.setSaveHistory(saveSetting());
+  }
+
   // Right-click → Clear History. Refused while a full-screen program owns the screen.
   async clearThreadHistory(id: unknown): Promise<void> {
     await this.ready;
@@ -120,23 +137,27 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     await this.viewSized;
     const storage = this.context.storageUri ?? this.context.globalStorageUri;
     const secrets = this.context.secrets;
-    const found = await historyKey(secrets);
+    // With saving off there's nothing to encrypt; don't touch the keychain at all.
+    this.keyFetched = saveSetting();
+    const found = this.keyFetched ? await historyKey(secrets) : null;
+    this.key = found?.key ?? null;
     // The key is still read with encryption off, so existing encrypted history can be converted.
-    if (!found && encryptSetting()) {
+    if (!found && encryptSetting() && saveSetting()) {
       void vscode.window.showWarningMessage("Terminal Threads couldn't use VS Code's secret storage, so thread history won't be saved this session.");
     }
     const store = new ThreadStore(storage.fsPath, found?.key ?? null, encryptSetting());
     await store.secure().catch((e) => console.warn('terminal-threads: could not tighten storage permissions', e));
+    await store.cleanup().catch((e) => console.warn('terminal-threads: could not clean up old files', e));
     // VS Code drops a secret it can't decrypt, so a lost key looks like a first run; say so once.
     if (found?.created && (await store.hasEncryptedHistory())) {
       void vscode.window.showWarningMessage("Terminal Threads' saved history was encrypted with a key VS Code here no longer has (another computer, or a reset keychain), so it can't be read. It was moved aside, and those threads start empty.");
     }
     // Two windows can create the first key at once; the one that ends up stored wins everywhere.
     this.context.subscriptions.push(secrets.onDidChange(async (e) => {
-      if (e.key !== KEY_NAME || !found) return;
+      if (e.key !== KEY_NAME || !this.key) return;
       const stored = Buffer.from((await secrets.get(KEY_NAME)) ?? '', 'base64');
-      if (stored.length === 32 && !stored.equals(found.key)) {
-        found.key = stored;
+      if (stored.length === 32 && !stored.equals(this.key)) {
+        this.key = stored;
         this.manager?.rekey(stored);
       }
     }));

@@ -127,7 +127,7 @@
     "build": "node esbuild.mjs",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc",
-    "package": "for t in darwin-arm64 linux-x64 linux-arm64; do vsce package --target $t || exit 1; done",
+    "package": "for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do vsce package --target $t || exit 1; done",
     "e2e": "node --test --test-concurrency=1 e2e/*.e2e.ts"
   },
   "dependencies": {

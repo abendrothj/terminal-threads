@@ -264,3 +264,16 @@ test('turning encryption back on re-seals every thread', async () => {
   await m.saveDirty();
   assert.ok(!(await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('reseal-4'));
 });
+
+test('a key that arrives later enables saving', async () => {
+  const store = await tempDir('tt-store-');
+  const m = manager(store, await tempDir('tt-home-'), true, null);
+  const a = await m.create();
+  m.get(a)!.write('echo later-$((5))\r');
+  await waitFor(async () => (await snap(m, a)).includes('later-5'));
+  await m.saveAll();
+  assert.deepEqual(await readdir(join(store, 'threads')).catch(() => []), []);
+  m.rekey(KEY);
+  await m.saveDirty();
+  assert.ok((await new ThreadStore(store, KEY).loadHistory(a))?.history.includes('later-5'));
+});
