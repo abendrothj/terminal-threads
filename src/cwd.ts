@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { basename } from 'node:path';
 
@@ -26,12 +27,20 @@ export function parseLsofCwd(stdout: string): string | null {
   return line ? line.slice(1) : null;
 }
 
+// Linux: one readlink, no process spawn. macOS has no /proc, so ask lsof.
 export function shellCwd(pid: number): Promise<string | null> {
+  if (process.platform === 'linux') return readlink(`/proc/${pid}/cwd`).catch(() => null);
   return new Promise((resolve) => {
     execFile('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { timeout: 2000 }, (err, stdout) => {
       resolve(err ? null : parseLsofCwd(stdout));
     });
   });
+}
+
+// node-pty gives the bare name on macOS but argv[0] on Linux (often a full path), and nothing
+// in the moment after a program exits.
+export function programName(raw: string | undefined): string | null {
+  return raw ? basename(raw) || raw : null;
 }
 
 const cut = (s: string) => (s.length > TITLE_PART_MAX ? s.slice(0, TITLE_PART_MAX - 1) + '…' : s);

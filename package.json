@@ -11,6 +11,9 @@
     "vscode": "^1.146.0"
   },
   "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
   "contributes": {
     "viewsContainers": {
       "secondarySidebar": [

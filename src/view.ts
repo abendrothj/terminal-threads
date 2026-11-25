@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { ThreadManager } from './manager.ts';
 import { ThreadStore } from './store.ts';
@@ -124,7 +124,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     const m = new ThreadManager({
       store,
       defaultDir: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir(),
-      shell: process.env.SHELL ?? '/bin/zsh',
+      shell: process.env.SHELL || userInfo().shell || '/bin/sh',
       args: ['-l'],
       env: process.env,
       cols: this.size.cols,

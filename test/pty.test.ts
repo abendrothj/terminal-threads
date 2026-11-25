@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { basename } from 'node:path';
 import nodePty from 'node-pty';
 
 const { spawn } = nodePty;
@@ -18,13 +19,15 @@ test('reports the foreground program', async () => {
   const pty = spawn('/bin/sh', [], { cols: 80, rows: 24 });
   try {
     await sleep(200);
-    // macOS /bin/sh execs bash, so the shell's own name is whatever it reports while idle.
-    const shellName = pty.process;
-    pty.write('sleep 2\r');
-    await sleep(300);
-    assert.equal(pty.process, 'sleep');
+    // macOS /bin/sh execs bash and Linux reports argv[0] (often a path), so compare basenames
+    // against whatever the idle shell reports.
+    const name = () => basename(pty.process);
+    const shellName = name();
+    pty.write(`perl -e 'sleep 2'\r`);
+    await sleep(400);
+    assert.equal(name(), 'perl');
     await sleep(2200);
-    assert.equal(pty.process, shellName);
+    assert.equal(name(), shellName);
   } finally {
     pty.kill();
   }

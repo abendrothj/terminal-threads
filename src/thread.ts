@@ -5,7 +5,7 @@ import type { IPty } from 'node-pty';
 import type { Terminal } from '@xterm/headless';
 import type { SerializeAddon } from '@xterm/addon-serialize';
 import { captureHistory, createHeadless, type SavedHistory } from './history.ts';
-import { formatTitle, parseOsc7, shellCwd } from './cwd.ts';
+import { formatTitle, parseOsc7, programName, shellCwd } from './cwd.ts';
 import { WaitingTracker } from './waiting.ts';
 
 export interface ThreadOptions {
@@ -184,7 +184,7 @@ export class Thread {
   private async refresh(): Promise<void> {
     const pty = this.pty;
     if (!pty || this.disposed) return;
-    this.program = pty.process;
+    this.program = programName(pty.process) ?? this.program;
     // macOS /bin/sh execs bash, so the shell's real name is the first one seen.
     this.shellName ??= this.program;
     const shellInFront = this.program === this.shellName || this.program === basename(this.opts.shell);

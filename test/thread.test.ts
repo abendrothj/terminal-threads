@@ -51,8 +51,8 @@ test('title follows cd and program', async () => {
   const sh = shellName(t);
   t.write('cd /tmp\r');
   await waitFor(() => t.lastDir === realpathSync('/tmp') && t.title === `tmp — ${sh}`);
-  t.write('sleep 1\r');
-  await waitFor(() => titles.at(-1) === 'tmp — sleep');
+  t.write(`perl -e 'sleep 1'\r`);
+  await waitFor(() => titles.at(-1) === 'tmp — perl');
   await waitFor(() => titles.at(-1) === `tmp — ${sh}`);
 });
 
