@@ -1,6 +1,7 @@
 import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SavedHistory } from './history.ts';
+import { open, seal, type EncryptedFile } from './crypt.ts';
 
 export interface ThreadMeta {
   id: string;
@@ -25,11 +26,19 @@ const isHistory = (v: unknown): v is SavedHistory => {
   return typeof v === 'object' && v !== null && isString(h.history) && (h.frame === null || (Array.isArray(h.frame) && h.frame.every(isString)));
 };
 
+const isEncrypted = (v: unknown): v is EncryptedFile => {
+  const f = v as EncryptedFile;
+  return typeof v === 'object' && v !== null && f.v === 2 && isString(f.iv) && isString(f.tag) && isString(f.data);
+};
+
 export class ThreadStore {
   private readonly dir: string;
+  // Null when secret storage is unavailable: nothing is saved and encrypted files are left alone.
+  private readonly key: Buffer | null;
 
-  constructor(dir: string) {
+  constructor(dir: string, key: Buffer | null) {
     this.dir = dir;
+    this.key = key;
   }
 
   async loadIndex(): Promise<ThreadMeta[]> {
@@ -48,11 +57,23 @@ export class ThreadStore {
   }
 
   async loadHistory(id: string): Promise<SavedHistory | null> {
-    return this.read(this.historyPath(id), isHistory);
+    const file = this.historyPath(id);
+    const raw = await this.read(file, (v): v is EncryptedFile | SavedHistory => isEncrypted(v) || isHistory(v));
+    if (!raw || !isEncrypted(raw)) return raw; // round-1 plain text: rewritten encrypted on the next save
+    if (!this.key) return null;
+    try {
+      const h: unknown = JSON.parse(open(this.key, id, raw));
+      if (isHistory(h)) return h;
+    } catch {
+      // another machine's key, or altered: quarantine below
+    }
+    await this.quarantine(file);
+    return null;
   }
 
   async saveHistory(id: string, h: SavedHistory): Promise<void> {
-    return this.writeAtomic(this.historyPath(id), JSON.stringify(h));
+    if (!this.key) throw new Error('terminal-threads: no history key, not saving');
+    return this.writeAtomic(this.historyPath(id), JSON.stringify(seal(this.key, id, JSON.stringify(h))));
   }
 
   // Round 1 wrote with the default umask; make existing folders and files owner-only.
@@ -95,10 +116,14 @@ export class ThreadStore {
     } catch {
       // fall through to quarantine
     }
+    await this.quarantine(file);
+    return null;
+  }
+
+  private async quarantine(file: string): Promise<void> {
     const aside = `${file}.corrupt-${Date.now()}`;
     await rename(file, aside);
     console.warn(`terminal-threads: moved unreadable ${file} to ${aside}`);
-    return null;
   }
 
   private async writeAtomic(file: string, data: string): Promise<void> {

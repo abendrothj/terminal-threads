@@ -7,6 +7,9 @@ import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { ThreadManager } from '../src/manager.ts';
 import { ThreadStore } from '../src/store.ts';
+import { newKey } from '../src/crypt.ts';
+
+const KEY = newKey();
 
 const cleanup: (() => Promise<unknown>)[] = [];
 after(async () => { for (const c of cleanup.reverse()) await c().catch(() => {}); });
@@ -17,7 +20,7 @@ async function tempDir(prefix: string): Promise<string> {
   return d;
 }
 function manager(storeDir: string, defaultDir: string, saveHistory = true): ThreadManager {
-  const m = new ThreadManager({ store: new ThreadStore(storeDir), defaultDir, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory });
+  const m = new ThreadManager({ store: new ThreadStore(storeDir, KEY), defaultDir, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory });
   cleanup.push(() => m.dispose());
   return m;
 }
@@ -147,9 +150,10 @@ test('clearing rewrites the saved file now', async () => {
   m.get(a)!.write('echo SECRET-$((4))\r');
   await waitFor(async () => (await snap(m, a)).includes('SECRET-4'));
   await m.saveAll();
-  assert.ok((await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('SECRET-4'));
+  const saved = () => new ThreadStore(store, KEY).loadHistory(a).then((h) => h?.history ?? '');
+  assert.ok((await saved()).includes('SECRET-4'));
   assert.equal(await m.clearHistory(a), true);
-  assert.ok(!(await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('SECRET-4'));
+  assert.ok(!(await saved()).includes('SECRET-4'));
 });
 
 test('turning saving off deletes history and stops writing', async () => {
