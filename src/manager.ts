@@ -31,6 +31,7 @@ export interface ManagerDeps {
 
 export class ThreadManager {
   private readonly deps: ManagerDeps;
+  // This window's threads only; the index on disk may also list other windows' (shared storage).
   private metas: ThreadMeta[] = [];
   private readonly threads = new Map<string, Thread>();
   private readonly changeListeners: (() => void)[] = [];
@@ -60,7 +61,7 @@ export class ThreadManager {
     const { store, defaultDir } = this.deps;
     // "Off" means gone, even if it was switched off while this window wasn't running.
     if (!this.setting) await this.enqueue(() => store.deleteAllHistory());
-    for (const meta of await store.loadIndex()) {
+    for (const meta of await this.enqueue(() => store.claimFree())) {
       const dir = [meta.lastDir, meta.startDir, defaultDir].find((d) => existsSync(d)) ?? defaultDir;
       // One unreadable file must not lose the other threads; this one restores without history.
       const history = !this.saving ? null : await store.loadHistory(meta.id).catch((e) => {
@@ -93,7 +94,11 @@ export class ThreadManager {
     this.open(id, dir, '');
     if (startupCommand.trim()) this.threads.get(id)!.write(startupCommand + '\r');
     this.changed();
-    await this.enqueue(() => this.deps.store.saveIndex(this.metas));
+    const meta = { ...this.metas.at(-1)! };
+    await this.enqueue(async () => {
+      await this.claimOpen();
+      await this.deps.store.updateIndex((all) => [...all.filter((m) => m.id !== id), meta]);
+    });
     return id;
   }
 
@@ -105,16 +110,18 @@ export class ThreadManager {
       this.metas = this.metas.filter((m) => m.id !== id);
       this.changed();
       await this.deps.store.deleteHistory(id);
-      await this.deps.store.saveIndex(this.metas);
+      await this.deps.store.updateIndex((all) => all.filter((m) => m.id !== id));
+      await this.claimOpen();
     });
   }
 
   async rename(id: string, name: string): Promise<void> {
     const meta = this.metas.find((m) => m.id === id);
     if (!meta) return;
-    meta.customName = name.trim() || null;
+    const customName = name.trim() || null;
+    meta.customName = customName;
     this.changed();
-    await this.enqueue(() => this.deps.store.saveIndex(this.metas));
+    await this.enqueue(() => this.deps.store.updateIndex((all) => all.map((m) => (m.id === id ? { ...m, customName } : m))));
   }
 
   // Clears a thread's scrollback and rewrites its saved file now, so the old text leaves the disk.
@@ -160,7 +167,18 @@ export class ThreadManager {
     const [meta] = this.metas.splice(from, 1);
     this.metas.splice(to, 0, meta!);
     this.changed();
-    await this.enqueue(() => this.deps.store.saveIndex(this.metas));
+    // On disk, other windows' threads sit between ours: place it next to its new neighbour.
+    const before = this.metas[to - 1]?.id;
+    const after = this.metas[to + 1]?.id;
+    await this.enqueue(() => this.deps.store.updateIndex((all) => {
+      const i = all.findIndex((m) => m.id === id);
+      if (i < 0) return all;
+      const [moved] = all.splice(i, 1);
+      const b = all.findIndex((m) => m.id === before);
+      const a = all.findIndex((m) => m.id === after);
+      all.splice(b >= 0 ? b + 1 : a >= 0 ? a : before === undefined ? 0 : all.length, 0, moved!);
+      return all;
+    }));
   }
 
   setWatched(id: string | null): void {
@@ -186,7 +204,10 @@ export class ThreadManager {
 
   start(): void {
     this.timers.push(
-      setInterval(() => void this.saveDirty().catch((e) => console.error('terminal-threads: save failed', e)), SAVE_INTERVAL_MS),
+      setInterval(() => {
+        void this.saveDirty().catch((e) => console.error('terminal-threads: save failed', e));
+        void this.enqueue(() => this.deps.store.heartbeat()).catch((e) => console.warn('terminal-threads: could not refresh lease', e));
+      }, SAVE_INTERVAL_MS),
       setInterval(() => this.tick(), TICK_MS),
     );
   }
@@ -200,6 +221,8 @@ export class ThreadManager {
       } finally {
         this.threads.forEach((t) => t.dispose());
         this.threads.clear();
+        // Saved: the threads are free for the next window that opens.
+        await this.enqueue(() => this.deps.store.release()).catch((e) => console.warn('terminal-threads: could not release lease', e));
       }
     })();
     return this.disposed;
@@ -213,7 +236,7 @@ export class ThreadManager {
   }
 
   private async save(which: (t: Thread) => boolean): Promise<void> {
-    let indexChanged = false;
+    const moved = new Map<string, string>();
     for (const meta of this.metas) {
       const t = this.threads.get(meta.id);
       if (!t || !which(t) || this.unread.has(meta.id)) continue;
@@ -227,10 +250,12 @@ export class ThreadManager {
       }
       if (t.lastDir && t.lastDir !== meta.lastDir) {
         meta.lastDir = t.lastDir;
-        indexChanged = true;
+        moved.set(meta.id, t.lastDir);
       }
     }
-    if (indexChanged) await this.deps.store.saveIndex(this.metas);
+    if (moved.size > 0) {
+      await this.deps.store.updateIndex((all) => all.map((m) => (moved.has(m.id) ? { ...m, lastDir: moved.get(m.id)! } : m)));
+    }
   }
 
   private tick(): void {
@@ -240,6 +265,10 @@ export class ThreadManager {
       this.waitingListeners.forEach((l) => l(id));
       this.changed();
     }
+  }
+
+  private claimOpen(): Promise<void> {
+    return this.deps.store.claim(this.metas.map((m) => m.id));
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {

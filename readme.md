@@ -11,6 +11,7 @@ Independent terminal "threads" in VS Code's right sidebar, modeled on [Zed's Ter
 - **Threads in the right sidebar.** `+` opens a new thread: a plain login shell in the workspace folder. Nothing is auto-run.
 - **Live titles**, Zed style: `folder — program`, updated as you `cd` or start a program. Right-click → **Rename** to pin a name (empty restores the live title).
 - **History survives restarts.** After a reload or restart each thread comes back in order with its scrollback (up to 5,000 lines), a `── session ended ──` line, and a fresh shell in the folder it was last in. If a full-screen program (an agent TUI, vim) was open, its last screen is kept as a still picture above the line.
+- **Several windows, one storage folder** (empty windows, or Remote-SSH to the same folder from two computers): each thread belongs to the window that has it open, and every window's changes are kept. A second window doesn't reopen threads that another open window has; they come back once that window closes.
 - **A waiting dot** on a thread that finished at least ~10 s of output while you weren't looking, plus a notification when the sidebar is hidden or VS Code is in the background. Short commands like `ls` never mark.
 - **Fast rendering** with xterm.js's WebGL renderer (falls back to the DOM renderer).
 - **Reorder** by dragging a thread in the list, or right-click → Move Up / Move Down.

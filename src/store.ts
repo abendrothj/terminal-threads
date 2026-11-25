@@ -1,5 +1,8 @@
-import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { SavedHistory } from './history.ts';
 import { open, seal, type EncryptedFile } from './crypt.ts';
 
@@ -15,6 +18,35 @@ const ignoreMissing = (e: NodeJS.ErrnoException) => {
   if (e.code !== 'ENOENT') throw e;
 };
 let tmpCounter = 0;
+
+// Several windows can share one storage folder: empty windows all use globalStorage, and Remote-SSH
+// windows from different computers on the same remote folder share its workspace storage. So:
+// - every index change is a read-modify-write under a lock folder (mkdir is atomic), so one
+//   window never writes back another's stale list;
+// - each window keeps a lease (owners/<random>.json) naming the threads it has open, and only
+//   restores threads no live window holds, so two windows never write the same history file.
+// A lock older than this was left by a crash mid-update (holders take milliseconds).
+export const LOCK_STALE_MS = 10_000;
+// Leases are refreshed on every save tick; one this old belongs to a window that is gone.
+export const LEASE_STALE_MS = 60_000;
+
+interface Lease {
+  host: string;
+  pid: number;
+  ids: string[];
+}
+const isLease = (v: unknown): v is Lease => {
+  const l = v as Lease;
+  return typeof v === 'object' && v !== null && isString(l.host) && Number.isInteger(l.pid) && Array.isArray(l.ids) && l.ids.every(isString);
+};
+const pidAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+};
 
 const isString = (v: unknown): v is string => typeof v === 'string';
 const isMeta = (v: unknown): v is ThreadMeta => {
@@ -39,9 +71,13 @@ export class ThreadStore {
   // Off (the user's choice): history is written as plain, owner-only JSON. Encrypted files are still
   // read while the key exists, and rewritten plain on their next save.
   private encrypt: boolean;
+  // This window's lease file; random, so two windows in one process (tests) stay apart.
+  private readonly lease: string;
+  private leaseIds: string[] = [];
 
   constructor(dir: string, key: Buffer | null, encrypt = true) {
     this.dir = dir;
+    this.lease = join(dir, 'owners', `${randomUUID()}.json`);
     this.key = key;
     this.encrypt = encrypt;
   }
@@ -70,6 +106,95 @@ export class ThreadStore {
     return this.writeAtomic(join(this.dir, 'index.json'), JSON.stringify({ version: 1, threads }));
   }
 
+  // Applies `change` to the index as it is on disk now, not to this window's copy.
+  updateIndex(change: (threads: ThreadMeta[]) => ThreadMeta[]): Promise<void> {
+    return this.withLock(async () => this.saveIndex(change(await this.loadIndex())));
+  }
+
+  // Startup: the threads no live window holds, now held by this one.
+  claimFree(): Promise<ThreadMeta[]> {
+    return this.withLock(async () => {
+      const held = await this.heldElsewhere();
+      const free = (await this.loadIndex()).filter((t) => !held.has(t.id));
+      await this.claim(free.map((t) => t.id));
+      return free;
+    });
+  }
+
+  // The threads this window has open. Written before a new thread enters the index, so no other
+  // window can restore it in between.
+  async claim(ids: string[]): Promise<void> {
+    this.leaseIds = [...ids];
+    const lease: Lease = { host: hostname(), pid: process.pid, ids: this.leaseIds };
+    await this.writeAtomic(this.lease, JSON.stringify(lease));
+  }
+
+  // Keeps the lease fresh; rewrites it if another window took it for a dead one (after a sleep).
+  async heartbeat(): Promise<void> {
+    const now = new Date();
+    await utimes(this.lease, now, now).catch((e: NodeJS.ErrnoException) => {
+      if (e.code !== 'ENOENT') throw e;
+      return this.claim(this.leaseIds);
+    });
+  }
+
+  release(): Promise<void> {
+    return rm(this.lease, { force: true });
+  }
+
+  // Threads held by other live windows. Dead windows' leases are removed on the way.
+  private async heldElsewhere(now = Date.now()): Promise<Set<string>> {
+    const owners = join(this.dir, 'owners');
+    const held = new Set<string>();
+    const files = await readdir(owners).catch((e) => (ignoreMissing(e), [] as string[]));
+    for (const f of files.filter((n) => n.endsWith('.json'))) {
+      const file = join(owners, f);
+      if (file === this.lease) continue;
+      const [text, mtime] = await Promise.all([
+        readFile(file, 'utf8').catch(() => null),
+        stat(file).then((st) => st.mtimeMs, () => 0),
+      ]);
+      let lease: unknown = null;
+      try {
+        lease = text === null ? null : JSON.parse(text);
+      } catch {
+        // unreadable: treated as gone
+      }
+      // Another computer's pid can't be checked here; its lease lives as long as it's refreshed.
+      if (isLease(lease) && now - mtime < LEASE_STALE_MS && (lease.host !== hostname() || pidAlive(lease.pid))) {
+        lease.ids.forEach((id) => held.add(id));
+        continue;
+      }
+      await rm(file, { force: true });
+    }
+    return held;
+  }
+
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const lock = join(this.dir, 'index.lock');
+    await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    for (;;) {
+      try {
+        await mkdir(lock, { mode: 0o700 });
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+        const age = await stat(lock).then((st) => Date.now() - st.mtimeMs, () => 0);
+        if (age > LOCK_STALE_MS) {
+          console.warn('terminal-threads: removing a stale index lock');
+          await rm(lock, { recursive: true, force: true });
+        } else {
+          await sleep(5 + Math.random() * 20);
+        }
+      }
+    }
+    try {
+      return await fn();
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
+
   async loadHistory(id: string): Promise<SavedHistory | null> {
     const file = this.historyPath(id);
     const raw = await this.read(file, (v): v is EncryptedFile | SavedHistory => isEncrypted(v) || isHistory(v));
@@ -95,7 +220,7 @@ export class ThreadStore {
   // Round 1 wrote with the default umask; make existing folders and files owner-only.
   async secure(): Promise<void> {
     const threads = join(this.dir, 'threads');
-    for (const [path, mode] of [[this.dir, 0o700], [threads, 0o700], [join(this.dir, 'index.json'), 0o600]] as const) {
+    for (const [path, mode] of [[this.dir, 0o700], [threads, 0o700], [join(this.dir, 'owners'), 0o700], [join(this.dir, 'index.json'), 0o600]] as const) {
       await chmod(path, mode).catch(ignoreMissing);
     }
     const files = await readdir(threads).catch((e) => (ignoreMissing(e), [] as string[]));
@@ -121,7 +246,7 @@ export class ThreadStore {
   // them in plain text), and quarantined files older than a month are no longer worth keeping.
   async cleanup(now = Date.now()): Promise<void> {
     const MONTH = 30 * 86_400_000;
-    for (const dir of [this.dir, join(this.dir, 'threads')]) {
+    for (const dir of [this.dir, join(this.dir, 'threads'), join(this.dir, 'owners')]) {
       const files = await readdir(dir).catch((e) => (ignoreMissing(e), [] as string[]));
       for (const f of files) {
         const corrupt = /\.corrupt-(\d+)$/.exec(f);
