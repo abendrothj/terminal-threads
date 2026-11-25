@@ -57,3 +57,41 @@ test('history is capped', async () => {
 test('null restores to only the separator', () => {
   assert.equal(restoredPrefix(null), '\r\n' + SEPARATOR + '\r\n');
 });
+
+const frameLines = (text: string) => {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => l.includes('last screen ──'));
+  const end = lines.findIndex((l) => l.includes('── session ended ──'));
+  return lines.slice(start + 1, end);
+};
+
+test('restored frame drops edge blank rows and collapses blank runs', async () => {
+  const saved = { history: '', frame: ['', '', 'LOGO', '', '', '', 'INPUT', 'STATUS', '', ''], program: 'opencode' };
+  const text = visibleText(await restoreInto(restoredPrefix(saved)));
+  assert.deepEqual(frameLines(text).map((l) => l.trim()), ['LOGO', '', 'INPUT', 'STATUS']);
+});
+
+test('restored frame is labelled with the program and drawn dim', async () => {
+  const term = await restoreInto(restoredPrefix({ history: '', frame: ['LOGO'], program: 'opencode' }));
+  const text = visibleText(term);
+  assert.ok(text.includes('── opencode, last screen ──'), text);
+  const buf = term.buffer.active;
+  for (let y = 0; y < buf.length; y++) {
+    const line = buf.getLine(y)!;
+    if (line.translateToString(true) === 'LOGO') assert.ok(line.getCell(0)!.isDim(), 'frame text is dim');
+  }
+});
+
+test('frame without a known program gets a plain label', async () => {
+  const text = visibleText(await restoreInto(restoredPrefix({ history: '', frame: ['X'] })));
+  assert.ok(text.includes('── last screen ──'), text);
+});
+
+test('capture records the program that was full screen', async () => {
+  const { term, serializer } = createHeadless(80, 24);
+  await write(term, '\x1b[?1049h\x1b[HTUI');
+  assert.equal(captureHistory(term, serializer, 'opencode').program, 'opencode');
+  const { term: t2, serializer: s2 } = createHeadless(80, 24);
+  await write(t2, 'plain');
+  assert.equal(captureHistory(t2, s2, 'zsh').program, undefined);
+});

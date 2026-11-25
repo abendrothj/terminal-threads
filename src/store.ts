@@ -23,7 +23,8 @@ const isMeta = (v: unknown): v is ThreadMeta => {
 };
 const isHistory = (v: unknown): v is SavedHistory => {
   const h = v as SavedHistory;
-  return typeof v === 'object' && v !== null && isString(h.history) && (h.frame === null || (Array.isArray(h.frame) && h.frame.every(isString)));
+  return typeof v === 'object' && v !== null && isString(h.history) && (h.frame === null || (Array.isArray(h.frame) && h.frame.every(isString)))
+    && (h.program === undefined || h.program === null || isString(h.program));
 };
 
 const isEncrypted = (v: unknown): v is EncryptedFile => {

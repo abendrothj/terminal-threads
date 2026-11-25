@@ -128,7 +128,7 @@ export class Thread {
   }
 
   capture(): Promise<SavedHistory> {
-    return new Promise((resolve) => this.term.write('', () => resolve(captureHistory(this.term, this.serializer))));
+    return new Promise((resolve) => this.term.write('', () => resolve(captureHistory(this.term, this.serializer, this.program || null))));
   }
 
   dispose(): void {
