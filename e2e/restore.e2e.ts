@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { historyFiles, launchVSCode, openThreads, screenText, typeIn, waitFor } from './vscode.ts';
+import { launchVSCode, openThreads, screenText, typeIn, waitFor } from './vscode.ts';
 
 test('restart restores history, the separator and exactly one fresh prompt', async () => {
   const vs = await launchVSCode();
@@ -8,7 +8,6 @@ test('restart restores history, the separator and exactly one fresh prompt', asy
     let frame = await openThreads(vs.page);
     await typeIn(vs.page, frame, 'echo RESTORE-$((6*7))\r');
     await waitFor(async () => (await screenText(frame)).includes('RESTORE-42'), 15_000, 'marker on screen');
-    await waitFor(() => historyFiles(vs.profile).length > 0, 15_000, 'autosave');
     await vs.restart();
     frame = await openThreads(vs.page);
     await waitFor(async () => (await screenText(frame)).includes('session ended'), 30_000, 'restored separator');

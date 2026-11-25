@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { historyFiles, launchVSCode, threadMenu, openThreads, screenText, sleep, typeIn, waitFor, writeUserSettings } from './vscode.ts';
+import { historyFiles, launchVSCode, savedAfter, threadMenu, openThreads, screenText, sleep, typeIn, waitFor, writeUserSettings } from './vscode.ts';
 
 test('Clear History removes earlier output from the screen and the disk at once', async () => {
   const vs = await launchVSCode({ settings: { 'terminalThreads.historyEncryption': 'off' } });
@@ -23,8 +23,10 @@ test('history is encrypted on disk even when the workspace says off', async () =
   try {
     const frame = await openThreads(vs.page);
     await typeIn(vs.page, frame, 'echo ENC-$((1+1))\r');
-    await waitFor(() => historyFiles(vs.profile).length > 0, 15_000, 'autosave');
-    await sleep(4000);
+    await waitFor(async () => (await screenText(frame)).includes('ENC-2'), 15_000, 'marker on screen');
+    const since = Date.now();
+    await typeIn(vs.page, frame, 'echo tick\r'); // a save after this output contains the marker too
+    await savedAfter(vs.profile, since);
     const [file] = historyFiles(vs.profile);
     const raw = readFileSync(file!, 'utf8');
     assert.equal(JSON.parse(raw).v, 2);
@@ -41,7 +43,6 @@ test("a full-screen program's last screen comes back compacted and labelled", as
     let frame = await openThreads(vs.page);
     await typeIn(vs.page, frame, String.raw`perl -e '$|=1; print qq(\e[?1049h\e[2J\e[14;6HLOGO-ROW\e[20;3HInput box\e[21;3HStatus line\e[40;3HMCP line); sleep 60'` + '\r');
     await waitFor(async () => (await screenText(frame)).includes('MCP line'), 15_000, 'full-screen layout');
-    await sleep(4000);
     await vs.restart();
     frame = await openThreads(vs.page);
     await waitFor(async () => (await screenText(frame)).includes('last screen'), 30_000, 'restored picture');
@@ -106,6 +107,32 @@ test('turning saving on mid-session fetches the key and saves encrypted history'
     const raw = readFileSync(historyFiles(vs.profile)[0]!, 'utf8');
     assert.equal(JSON.parse(raw).v, 2);
   } finally {
+    await vs.dispose();
+  }
+});
+
+test('switching saving on without a keyring warns, and retries next time', { skip: process.env.TT_E2E_NO_KEYRING !== '1' }, async () => {
+  // Linux without a keyring: VS Code's default store never answers, so no key can be had.
+  // (--password-store=gnome-libsecret is different: VS Code falls back to an in-memory store.)
+  const prev = process.env.TT_E2E_DEFAULT_STORE;
+  process.env.TT_E2E_DEFAULT_STORE = '1';
+  const vs = await launchVSCode({ settings: { 'terminalThreads.saveHistory': false } });
+  try {
+    await openThreads(vs.page);
+    const warned = () => vs.page.$$eval('.notification-list-item-message', (e) => e.filter((x) => x.textContent?.includes('secret storage')).length);
+    writeUserSettings(vs.profile, { 'terminalThreads.saveHistory': true });
+    await waitFor(async () => (await warned()) >= 1, 30_000, 'warning after switching saving on').catch(async (e) => {
+      const all = await vs.page.$$eval('.notification-list-item-message', (m) => m.map((x) => x.textContent));
+      throw new Error(`${(e as Error).message}; notifications: ${JSON.stringify(all)}; history files: ${historyFiles(vs.profile).length}`);
+    });
+    await vs.page.$$eval('.notification-toast .codicon-notifications-clear, .notification-list-item .codicon-notifications-clear', (b) => b.forEach((x) => (x as HTMLElement).click()));
+    writeUserSettings(vs.profile, { 'terminalThreads.saveHistory': false });
+    await sleep(1000);
+    writeUserSettings(vs.profile, { 'terminalThreads.saveHistory': true });
+    await waitFor(async () => (await warned()) >= 1, 30_000, 'warning again on the retry');
+  } finally {
+    if (prev === undefined) delete process.env.TT_E2E_DEFAULT_STORE;
+    else process.env.TT_E2E_DEFAULT_STORE = prev;
     await vs.dispose();
   }
 });

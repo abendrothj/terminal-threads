@@ -22,6 +22,9 @@ test('Remote-SSH: threads run remotely, restore, and the key never leaves this m
     settings: {
       'remote.SSH.serverInstallPath': { [host!]: `${home}/tt-e2e/server` },
       'remote.SSH.enableAgentForwarding': false,
+      // Machine-scoped settings from local user settings do apply in remote windows (verified here);
+      // only workspace values are refused.
+      'terminalThreads.startupCommand': 'echo LOCALSTART-$((1+2))',
       ...(sshConfig ? { 'remote.SSH.configFile': sshConfig } : {}),
     },
   });
@@ -35,6 +38,7 @@ test('Remote-SSH: threads run remotely, restore, and the key never leaves this m
     await vs.page.waitForSelector(`.statusbar-item:has-text("SSH: ${host}")`, { timeout: 180_000 });
     let frame = await openThreads(vs.page);
     await waitFor(async () => (await threads(frame))[0]?.title.startsWith('ws — ') ?? false, 30_000, 'remote title');
+    await waitFor(async () => (await screenText(frame)).includes('LOCALSTART-3'), 15_000, 'local startup command in the remote thread');
     await typeIn(vs.page, frame, 'cd sub && echo REMOTE-$((6*7)) $(uname -m)\r');
     await waitFor(async () => (await threads(frame))[0]?.title.startsWith('sub — ') ?? false, 15_000, 'title after cd');
     await waitFor(async () => (await screenText(frame)).includes('REMOTE-42'), 15_000, 'remote output');

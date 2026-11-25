@@ -133,6 +133,8 @@ function createRow(id: string): HTMLLIElement {
 }
 
 function render(threads: ThreadInfo[]): void {
+  // Moving a row takes it out of the DOM for a moment, which drops focus; put it back.
+  const focused = document.activeElement instanceof HTMLElement && list.contains(document.activeElement) ? document.activeElement : null;
   const ids = new Set(threads.map((t) => t.id));
   for (const [id, li] of rows) if (!ids.has(id)) { li.remove(); rows.delete(id); }
   threads.forEach((t, i) => {
@@ -151,6 +153,7 @@ function render(threads: ThreadInfo[]): void {
     // Only move a row when the order really changed; moving it mid-drag would cancel the drag.
     if (list.children[i] !== li) list.insertBefore(li, list.children[i] ?? null);
   });
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus();
   empty.hidden = threads.length > 0;
   termEl.hidden = threads.length === 0;
 }
@@ -190,6 +193,15 @@ window.addEventListener('message', (e: MessageEvent<HostMsg>) => {
   }
 });
 
-window.addEventListener('focus', () => vscode.postMessage({ type: 'focus', focused: true }));
+// Opening a VS Code menu from the view drops focus to <body>; when the view gets focus back, return
+// it to the list control the user was on (not when they were in the terminal).
+let lastListFocus: HTMLElement | null = null;
+document.addEventListener('focusin', (e) => {
+  if (e.target instanceof HTMLElement && e.target !== document.body) lastListFocus = list.contains(e.target) ? e.target : null;
+});
+window.addEventListener('focus', () => {
+  vscode.postMessage({ type: 'focus', focused: true });
+  if (document.activeElement === document.body && lastListFocus?.isConnected) lastListFocus.focus();
+});
 window.addEventListener('blur', () => vscode.postMessage({ type: 'focus', focused: false }));
 vscode.postMessage({ type: 'ready', cols: term.cols, rows: term.rows });

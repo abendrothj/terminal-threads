@@ -22,6 +22,7 @@ jobs:
       - run: npm run build
   e2e:
     # Drives a real VS Code (downloaded by @vscode/test-electron) with the extension in dev mode.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

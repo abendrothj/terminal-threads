@@ -41,6 +41,8 @@ export class ThreadManager {
   private disposed: Promise<void> | null = null;
   private setting: boolean;
   private saving: boolean;
+  // Threads whose saved history this window couldn't read (no key): never overwrite their files.
+  private readonly unread = new Set<string>();
   private encrypt: boolean;
 
   constructor(deps: ManagerDeps) {
@@ -65,6 +67,7 @@ export class ThreadManager {
         console.warn(`terminal-threads: could not read history for ${meta.id}`, e);
         return null;
       });
+      if (!history && this.setting && (await store.hasHistory(meta.id))) this.unread.add(meta.id);
       this.metas.push(meta);
       this.open(meta.id, dir, restoredPrefix(history));
     }
@@ -213,7 +216,7 @@ export class ThreadManager {
     let indexChanged = false;
     for (const meta of this.metas) {
       const t = this.threads.get(meta.id);
-      if (!t || !which(t)) continue;
+      if (!t || !which(t) || this.unread.has(meta.id)) continue;
       t.dirty = false;
       try {
         if (this.saving) await this.deps.store.saveHistory(meta.id, await t.capture());

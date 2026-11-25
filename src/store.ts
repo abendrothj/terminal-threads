@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SavedHistory } from './history.ts';
 import { open, seal, type EncryptedFile } from './crypt.ts';
@@ -125,9 +125,15 @@ export class ThreadStore {
       const files = await readdir(dir).catch((e) => (ignoreMissing(e), [] as string[]));
       for (const f of files) {
         const corrupt = /\.corrupt-(\d+)$/.exec(f);
-        if (f.endsWith('.tmp') || (corrupt && now - Number(corrupt[1]) > MONTH)) await rm(join(dir, f), { force: true });
+        // A recent .tmp may be another window's save in progress (shared storage); leave it.
+        const staleTmp = f.endsWith('.tmp') && now - (await stat(join(dir, f)).then((st) => st.mtimeMs, () => now)) > 10 * 60_000;
+        if (staleTmp || (corrupt && now - Number(corrupt[1]) > MONTH)) await rm(join(dir, f), { force: true });
       }
     }
+  }
+
+  async hasHistory(id: string): Promise<boolean> {
+    return stat(this.historyPath(id)).then(() => true, () => false);
   }
 
   async deleteAllHistory(): Promise<void> {

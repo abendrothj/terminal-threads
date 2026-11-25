@@ -1,7 +1,7 @@
 // Drives a real VS Code with this extension in development mode, in a throwaway profile.
 // VSCODE_PATH points at an installed VS Code executable; otherwise a pinned build is downloaded.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import playwright from 'playwright-core';
@@ -82,7 +82,7 @@ export async function launchVSCode(opts: LaunchOptions = {}): Promise<VS> {
       '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--new-window',
       ...(opts.folderUri ? [] : [`--extensionDevelopmentPath=${EXT}`]),
       // CI Linux has no OS keyring; VS Code's basic store lets history saving be tested there.
-      ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu-sandbox', '--password-store=basic'] : []),
+      ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu-sandbox', ...(process.env.TT_E2E_DEFAULT_STORE ? [] : ['--password-store=basic'])] : []),
       ...(process.env.TT_E2E_ARGS ? process.env.TT_E2E_ARGS.split(' ') : []),
       opts.folderUri ? `--folder-uri=${opts.folderUri}` : folder,
     ];
@@ -90,7 +90,12 @@ export async function launchVSCode(opts: LaunchOptions = {}): Promise<VS> {
     vs.page = await vs.app.firstWindow();
     await vs.page.waitForSelector('.monaco-workbench', { timeout: 120_000 });
   };
-  await start();
+  try {
+    await start();
+  } catch (e) {
+    rmSync(profile, { recursive: true, force: true });
+    throw e;
+  }
   Object.assign(vs, {
     profile,
     folder,
@@ -110,9 +115,14 @@ export async function palette(page: Page, command: string): Promise<void> {
   const input = await page.waitForSelector('.quick-input-widget:not([style*="display: none"]) input', { timeout: 15_000 });
   await input.focus();
   await input.fill('>' + command);
-  await sleep(500);
+  // Press Enter only once the highlighted entry is the command asked for.
+  await waitFor(async () => (await page.$eval('.quick-input-list .monaco-list-row.focused .label-name', (e) => e.textContent ?? '').catch(() => '')).replace(/\s+/g, ' ').includes(command.split(': ').at(-1)!), 15_000, `palette entry "${command}"`)
+    .catch(async (e) => {
+      const rows = await page.$$eval('.quick-input-list .monaco-list-row', (r) => r.slice(0, 6).map((x) => `${x.classList.contains('focused') ? '>' : ' '}${x.querySelector('.label-name')?.textContent}`));
+      throw new Error(`${(e as Error).message}; palette shows ${JSON.stringify(rows)}`);
+    });
   await page.keyboard.press('Enter');
-  await sleep(500);
+  await sleep(300);
 }
 
 // The thread view's inner webview frame (the one with our #list).
@@ -148,7 +158,7 @@ export async function inSecondarySidebar(page: Page, frame: Frame): Promise<bool
 export const threads = (frame: Frame) => frame.$$eval('#list li', (lis) => lis.map((li) => ({
   title: li.querySelector('.name')?.textContent ?? '',
   selected: li.classList.contains('selected'),
-  waiting: !!li.querySelector('.dot'),
+  waiting: !(li.querySelector('.dot') as HTMLElement | null)?.hidden,
 })));
 
 export async function typeIn(page: Page, frame: Frame, text: string): Promise<void> {
@@ -194,4 +204,9 @@ export async function threadMenu(page: Page, frame: Frame, rowSelector: string, 
   if (index < 0) throw new Error(`menu has no "${item}": ${JSON.stringify(labels)}`);
   for (let i = 0; i <= index; i++) await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
+}
+
+// Waits for an autosave that happened after `since` (ms epoch): a history file at least that new.
+export async function savedAfter(profile: string, since: number, ms = 20_000): Promise<void> {
+  await waitFor(() => historyFiles(profile).some((f) => statSync(f).mtimeMs > since), ms, 'autosave after the output');
 }

@@ -20,6 +20,7 @@ const loginShell = () => {
 };
 // Machine-scoped too: a workspace must not be able to make + run a command.
 const startupCommand = () => vscode.workspace.getConfiguration().get<string>('terminalThreads.startupCommand', '');
+const NO_KEY_WARNING = "Terminal Threads couldn't use VS Code's secret storage, so thread history won't be saved this session.";
 const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
 // Machine-scoped in the manifest, so a workspace's .vscode/settings.json can't turn encryption off.
 const ENCRYPT_KEY = 'terminalThreads.historyEncryption';
@@ -34,7 +35,6 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | null = null;
   // Thread to show when the webview first reports ready (set by init, before any webview sync).
   private initial: string | null = null;
-  private keyFetched = false;
   private key: Buffer | null = null;
   private sizeKnown: () => void = () => {};
   private readonly viewSized = new Promise<void>((resolve) => { this.sizeKnown = resolve; });
@@ -103,16 +103,18 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     if (name !== undefined) await m.rename(id, name);
   }
 
-  // Saving switched on mid-session: the key wasn't fetched at startup, so get it now.
+  // Saving switched on mid-session without a key (skipped at startup, or unavailable then): try
+  // again now, and say so if it still can't be had.
   private async applySaveSetting(): Promise<void> {
     const m = this.manager;
     if (!m) return;
-    if (saveSetting() && !this.keyFetched) {
-      this.keyFetched = true;
+    if (saveSetting() && !this.key) {
       const k = await historyKey(this.context.secrets);
       if (k) {
         this.key = k.key;
         m.rekey(k.key);
+      } else if (encryptSetting()) {
+        void vscode.window.showWarningMessage(NO_KEY_WARNING);
       }
     }
     await m.setSaveHistory(saveSetting());
@@ -132,10 +134,11 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     if (this.sync.selected) await this.close(this.sync.selected);
   }
 
-  // Right-click → Move Up / Move Down (the keyboard way to reorder).
+  // Move Up / Move Down: from a row's right-click menu (its id), or the palette (the selected thread).
   async moveThread(id: unknown, delta: number): Promise<void> {
     await this.ready;
     const m = this.manager;
+    if (id === undefined) id = this.sync.selected;
     if (!m || typeof id !== 'string' || !m.get(id)) return;
     await m.move(id, m.list().findIndex((t) => t.id === id) + delta);
   }
@@ -163,12 +166,11 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     const storage = this.context.storageUri ?? this.context.globalStorageUri;
     const secrets = this.context.secrets;
     // With saving off there's nothing to encrypt; don't touch the keychain at all.
-    this.keyFetched = saveSetting();
-    const found = this.keyFetched ? await historyKey(secrets) : null;
+    const found = saveSetting() ? await historyKey(secrets) : null;
     this.key = found?.key ?? null;
     // The key is still read with encryption off, so existing encrypted history can be converted.
     if (!found && encryptSetting() && saveSetting()) {
-      void vscode.window.showWarningMessage("Terminal Threads couldn't use VS Code's secret storage, so thread history won't be saved this session.");
+      void vscode.window.showWarningMessage(NO_KEY_WARNING);
     }
     const store = new ThreadStore(storage.fsPath, found?.key ?? null, encryptSetting());
     await store.secure().catch((e) => console.warn('terminal-threads: could not tighten storage permissions', e));

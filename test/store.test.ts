@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile, mkdir, stat, chmod } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile, mkdir, stat, chmod, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ThreadStore, type ThreadMeta } from '../src/store.ts';
@@ -192,7 +192,7 @@ test('switching encryption off and on rewrites files on the next save', async ()
   assert.deepEqual(await store.loadHistory('a'), h);
 });
 
-test('cleanup removes stale temp files and old quarantine, keeps recent quarantine and history', async () => {
+test('cleanup removes stale temp files and old quarantine, keeps fresh temp files, recent quarantine and history', async () => {
   const dir = await freshDir();
   const now = Date.UTC(2026, 10, 25);
   const day = 86_400_000;
@@ -202,6 +202,13 @@ test('cleanup removes stale temp files and old quarantine, keeps recent quaranti
     drop: ['threads/a.json.123.4.tmp', 'index.json.9.9.tmp', `threads/b.json.corrupt-${now - 40 * day}`, `index.json.corrupt-${now - 31 * day}`],
   };
   for (const f of [...files.keep, ...files.drop]) await writeFile(join(dir, f), '{}');
+  // Temp files are only stale once old: another window sharing this storage may be mid-save.
+  const old = new Date(now - 60 * 60_000);
+  for (const f of files.drop.filter((f) => f.endsWith('.tmp'))) await utimes(join(dir, f), old, old);
+  files.keep.push('threads/fresh.json.77.1.tmp');
+  await writeFile(join(dir, 'threads/fresh.json.77.1.tmp'), '{}');
+  const recent = new Date(now - 60_000);
+  await utimes(join(dir, 'threads/fresh.json.77.1.tmp'), recent, recent);
   await new ThreadStore(dir, KEY).cleanup(now);
   const left = [...(await readdir(dir)).filter((f) => f !== 'threads'), ...(await readdir(join(dir, 'threads'))).map((f) => `threads/${f}`)].sort();
   assert.deepEqual(left, [...files.keep].sort());

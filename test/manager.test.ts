@@ -313,3 +313,31 @@ test('a startup command runs in new threads only, never on restore', async () =>
   const after = (await snap(m2, a)).split('── session ended ──').at(-1)!;
   assert.ok(!after.includes('STARTUP-2'), 'startup command ran again on restore');
 });
+
+test("history this window couldn't read is never overwritten", async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const m1 = manager(store, home);
+  const a = await m1.create();
+  m1.get(a)!.write('echo KEEP-$((9))\r');
+  await waitFor(async () => (await snap(m1, a)).includes('KEEP-9'));
+  await m1.saveAll();
+  await m1.dispose();
+  const file = join(store, 'threads', `${a}.json`);
+  const before = await readFile(file);
+  // A: no key this session, then the user turns encryption off.
+  const m2 = manager(store, home, true, null);
+  await m2.restore();
+  m2.setEncryption(false);
+  m2.get(a)!.write('echo new\r');
+  await waitFor(async () => (await snap(m2, a)).includes('new'));
+  await m2.saveAll();
+  await m2.dispose();
+  assert.deepEqual(await readFile(file), before, 'overwritten after turning encryption off');
+  // B: encryption already off at startup, still no key.
+  const m3 = new ThreadManager({ store: new ThreadStore(store, null, false), defaultDir: home, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory: true, keyAvailable: false, encrypt: false });
+  cleanup.push(() => m3.dispose());
+  await m3.restore();
+  await m3.saveAll();
+  assert.deepEqual(await readFile(file), before, 'overwritten with encryption off at startup');
+});

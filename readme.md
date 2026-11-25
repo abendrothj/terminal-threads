@@ -27,9 +27,9 @@ Terminal output often contains secrets (`cat .env`, tokens printed by CLIs), and
 - Files and folders are owner-only (`0600` / `0700`).
 - **Right-click → Clear History** wipes a thread's scrollback and its saved file at once (refused while a full-screen program is open, since that screen isn't the scrollback).
 - `terminalThreads.saveHistory: false` stops saving and deletes saved history. Threads still come back, empty.
-- `terminalThreads.historyEncryption: "off"` keeps saving but as readable owner-only files, for Remote-SSH from several computers (each has its own key) or a Linux desktop without a keyring. It's a user setting only, so a workspace's `.vscode/settings.json` can't switch it off. Switching either way rewrites files on the next save.
+- `terminalThreads.historyEncryption: "off"` keeps saving but as readable owner-only files, for Remote-SSH from several computers (each has its own key) or a Linux desktop without a keyring. It's a user setting only (it applies in Remote-SSH windows too), so a workspace's `.vscode/settings.json` can't switch it off. Switching either way rewrites files on the next save.
 
-This protects copies of the files (backups, syncs, other accounts or admins on a remote host, disk scrapers). It does not protect against anything already running as you while VS Code is open, and it doesn't touch your shell's own history file. If VS Code loses the key (a reset keychain, another computer), saved history can't be read; you're told once and those threads start empty. On a Linux desktop without a keyring, VS Code's secret storage itself is weak.
+This protects copies of the files (backups, syncs, other accounts or admins on a remote host, disk scrapers). It does not protect against anything already running as you while VS Code is open, and it doesn't touch your shell's own history file. If VS Code loses the key (a reset keychain, another computer), saved history can't be read; you're told once and those threads start empty. On a Linux desktop without a keyring, VS Code keeps secrets only in memory (it tells you so), so the key is gone after a restart and saved history can't be read: set `terminalThreads.historyEncryption` to `"off"` there.
 
 ## Settings
 
@@ -37,8 +37,8 @@ This protects copies of the files (backups, syncs, other accounts or admins on a
 |---|---|---|
 | `terminalThreads.fontSize` | unset | Font size for this view; unset follows `terminal.integrated.fontSize`. |
 | `terminalThreads.saveHistory` | `true` | Save history across restarts. Off deletes it. |
-| `terminalThreads.historyEncryption` | `"on"` | `"off"` saves history as readable owner-only files. User settings only. |
-| `terminalThreads.startupCommand` | `""` | Command typed into every new thread. User settings only, so a workspace can't make `+` run something. |
+| `terminalThreads.historyEncryption` | `"on"` | `"off"` saves history as readable owner-only files. User settings only, also over Remote-SSH. |
+| `terminalThreads.startupCommand` | `""` | Command typed into every new thread. User settings only (also over Remote-SSH), so a workspace can't make `+` run something. |
 
 ## Install
 
