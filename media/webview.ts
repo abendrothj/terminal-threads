@@ -1,5 +1,6 @@
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { HISTORY_LINES, type HostMsg, type ViewMsg } from '../src/protocol.ts';
 import type { ThreadInfo } from '../src/manager.ts';
 
@@ -38,6 +39,23 @@ const term = new Terminal({
 const fit = new FitAddon();
 term.loadAddon(fit);
 term.open(termEl);
+// Electron 43.8.9 (VS Code 1.147) rejects canvas fonts with leading whitespace, which xterm's WebGL
+// glyph atlas emits, so glyphs fall back to 10px (xtermjs/xterm.js#6297). Same shim as
+// microsoft/vscode#348269, which only covers the workbench; remove once xterm.js #6312 ships.
+for (const proto of [CanvasRenderingContext2D.prototype, globalThis.OffscreenCanvasRenderingContext2D?.prototype]) {
+  const desc = proto && Object.getOwnPropertyDescriptor(proto, 'font');
+  if (!proto || !desc?.set) continue;
+  const set = desc.set;
+  Object.defineProperty(proto, 'font', { ...desc, set(this: unknown, value: string) { set.call(this, typeof value === 'string' ? value.trimStart() : value); } });
+}
+// GPU rendering like VS Code's own terminal; xterm falls back to its DOM renderer when this is gone.
+try {
+  const webgl = new WebglAddon();
+  webgl.onContextLoss(() => webgl.dispose());
+  term.loadAddon(webgl);
+} catch (e) {
+  console.warn('terminal-threads: WebGL unavailable, using the DOM renderer', e);
+}
 fit.fit();
 new MutationObserver(() => { term.options.theme = theme(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 new ResizeObserver(() => fit.fit()).observe(termEl);
