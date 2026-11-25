@@ -18,6 +18,8 @@ const loginShell = () => {
     return null;
   }
 };
+// Machine-scoped too: a workspace must not be able to make + run a command.
+const startupCommand = () => vscode.workspace.getConfiguration().get<string>('terminalThreads.startupCommand', '');
 const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
 // Machine-scoped in the manifest, so a workspace's .vscode/settings.json can't turn encryption off.
 const ENCRYPT_KEY = 'terminalThreads.historyEncryption';
@@ -88,7 +90,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     await this.ready;
     if (!this.manager) return;
-    await this.select(await this.manager.create());
+    await this.select(await this.manager.create(startupCommand()));
   }
 
   // Called from the thread row's right-click menu; `id` comes from its data-vscode-context.
@@ -201,7 +203,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     m.onWaiting((id) => void this.notifyWaiting(id));
     await m.restore();
     m.start();
-    if (m.list().length === 0) await m.create();
+    if (m.list().length === 0) await m.create(startupCommand());
     this.initial = m.list()[0]?.id ?? null;
   }
 

@@ -162,6 +162,12 @@
             "Save history as readable files (owner-only). Anything printed in a thread, secrets included, is stored in plain text."
           ],
           "markdownDescription": "Encrypt saved thread history. `off` stores it as readable owner-only files, which is useful with Remote-SSH from several computers or without a keyring, but keeps any secrets printed in a thread in plain text. User settings only: a workspace can't change it."
+        },
+        "terminalThreads.startupCommand": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Command typed into every **new** thread, for example `opencode`. Restored threads never run it. User settings only: a workspace can't set it."
         }
       }
     },

@@ -82,11 +82,13 @@ export class ThreadManager {
     return this.threads.get(id);
   }
 
-  async create(): Promise<string> {
+  // `startupCommand` is typed into the new shell once; restored threads never get it.
+  async create(startupCommand = ''): Promise<string> {
     const id = randomUUID();
     const dir = this.deps.defaultDir;
     this.metas.push({ id, customName: null, startDir: dir, lastDir: dir });
     this.open(id, dir, '');
+    if (startupCommand.trim()) this.threads.get(id)!.write(startupCommand + '\r');
     this.changed();
     await this.enqueue(() => this.deps.store.saveIndex(this.metas));
     return id;

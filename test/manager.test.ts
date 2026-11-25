@@ -297,3 +297,19 @@ test('move reorders threads and the order persists', async () => {
   await m2.restore();
   assert.deepEqual(m2.list().map((t) => t.id), [b, a, c]);
 });
+
+test('a startup command runs in new threads only, never on restore', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const m1 = manager(store, home);
+  const a = await m1.create('echo STARTUP-$((1+1))');
+  await waitFor(async () => (await snap(m1, a)).includes('STARTUP-2'));
+  await m1.saveAll();
+  await m1.dispose();
+  const m2 = manager(store, home);
+  await m2.restore();
+  await waitFor(async () => (await snap(m2, a)).includes('session ended'));
+  await new Promise((r) => setTimeout(r, 1500));
+  const after = (await snap(m2, a)).split('── session ended ──').at(-1)!;
+  assert.ok(!after.includes('STARTUP-2'), 'startup command ran again on restore');
+});

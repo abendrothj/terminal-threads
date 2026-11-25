@@ -13,6 +13,10 @@ Independent terminal "threads" in VS Code's right sidebar, modeled on [Zed's Ter
 - **History survives restarts.** After a reload or restart each thread comes back in order with its scrollback (up to 5,000 lines), a `── session ended ──` line, and a fresh shell in the folder it was last in. If a full-screen program (an agent TUI, vim) was open, its last screen is kept as a still picture above the line.
 - **A waiting dot** on a thread that finished at least ~10 s of output while you weren't looking, plus a notification when the sidebar is hidden or VS Code is in the background. Short commands like `ls` never mark.
 - **Fast rendering** with xterm.js's WebGL renderer (falls back to the DOM renderer).
+- **Reorder** by dragging a thread in the list, or right-click → Move Up / Move Down.
+- **Shortcuts** while the view has focus: `Cmd+Shift+]` / `Cmd+Shift+[` next / previous thread, `Cmd+Shift+T` new thread (`Ctrl` on Linux). **Close Thread** has a command but no default key, because closing deletes the thread's history with no confirmation; bind it yourself if you want one.
+- **Startup command** (`terminalThreads.startupCommand`, e.g. `opencode`): typed into every new thread, never into restored ones.
+- **Screen readers**: with `editor.accessibilitySupport: "on"` the terminal text is exposed to screen readers, as in VS Code's own terminal.
 - **Follows your terminal font**: `terminal.integrated.fontFamily`/`fontSize`/`lineHeight`, falling back to the editor's. `terminalThreads.fontSize` sets a size for this view only.
 
 ## Saved history and secrets
@@ -34,17 +38,19 @@ This protects copies of the files (backups, syncs, other accounts or admins on a
 | `terminalThreads.fontSize` | unset | Font size for this view; unset follows `terminal.integrated.fontSize`. |
 | `terminalThreads.saveHistory` | `true` | Save history across restarts. Off deletes it. |
 | `terminalThreads.historyEncryption` | `"on"` | `"off"` saves history as readable owner-only files. User settings only. |
+| `terminalThreads.startupCommand` | `""` | Command typed into every new thread. User settings only, so a workspace can't make `+` run something. |
 
 ## Install
 
-Download the `.vsix` for your platform from Releases, then `code --install-extension terminal-threads-<platform>-<version>.vsix`. For Remote-SSH, install the Linux package from the Extensions view while connected. VS Code may place the view in the left sidebar on first use on older versions; drag it to the right once.
+There's no release yet: build it from source (below), then `code --install-extension terminal-threads-<platform>-<version>.vsix`. For Remote-SSH, install the Linux package from the Extensions view while connected. VS Code may place the view in the left sidebar on first use on older versions; drag it to the right once.
 
 ## Build
 
 ```sh
 npm ci
 npm run build && npm run typecheck && npm test
-npm run package   # darwin-arm64, linux-x64 and linux-arm64 .vsix files
+npm run package   # darwin-arm64, darwin-x64, linux-x64 and linux-arm64 .vsix files
+npm run e2e       # drives a real VS Code (set VSCODE_PATH, or it downloads one); Linux needs xvfb-run
 ```
 
 Tests spawn real shells (node's built-in test runner, no framework). The Linux build uses node-pty's own prebuilds (glibc 2.28 or newer); CI also runs the suite in an AlmaLinux 8 container to check that floor.
