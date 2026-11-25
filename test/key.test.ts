@@ -33,3 +33,10 @@ test('storage errors and wrong-length keys give no key', async () => {
   assert.equal(await historyKey(fakeSecrets(undefined, { throwGet: true })), null);
   assert.equal(await historyKey(fakeSecrets(Buffer.alloc(16).toString('base64'))), null);
 });
+
+test('a secret store that never answers gives no key instead of hanging', async () => {
+  const never = { get: () => new Promise<string | undefined>(() => {}), store: () => new Promise<void>(() => {}) };
+  const start = Date.now();
+  assert.equal(await historyKey(never, 100), null);
+  assert.ok(Date.now() - start < 1000);
+});
