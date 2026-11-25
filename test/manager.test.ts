@@ -19,8 +19,8 @@ async function tempDir(prefix: string): Promise<string> {
   cleanup.push(() => rm(d, { recursive: true, force: true }));
   return d;
 }
-function manager(storeDir: string, defaultDir: string, saveHistory = true): ThreadManager {
-  const m = new ThreadManager({ store: new ThreadStore(storeDir, KEY), defaultDir, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory });
+function manager(storeDir: string, defaultDir: string, saveHistory = true, key: Buffer | null = KEY): ThreadManager {
+  const m = new ThreadManager({ store: new ThreadStore(storeDir, key), defaultDir, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory, keyAvailable: key !== null });
   cleanup.push(() => m.dispose());
   return m;
 }
@@ -189,4 +189,52 @@ test('restore with saving off shows only the separator', async () => {
   const text = await snap(m2, a);
   assert.ok(!text.includes('old-6'));
   assert.ok(text.includes('── session ended ──'));
+});
+
+test('restore with saving off deletes leftover history', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const m1 = manager(store, home);
+  await m1.create();
+  await m1.saveAll();
+  await m1.dispose();
+  assert.equal((await readdir(join(store, 'threads'))).length, 1);
+  const m2 = manager(store, home, false);
+  await m2.restore();
+  assert.deepEqual(await readdir(join(store, 'threads')), []);
+});
+
+test('without a key, encrypted history is kept and nothing is written', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const m1 = manager(store, home);
+  const a = await m1.create();
+  m1.get(a)!.write('echo keep-$((8))\r');
+  await waitFor(async () => (await snap(m1, a)).includes('keep-8'));
+  await m1.saveAll();
+  await m1.dispose();
+  const file = join(store, 'threads', `${a}.json`);
+  const before = await readFile(file);
+  const m2 = manager(store, home, true, null);
+  await m2.restore();
+  await m2.setSaveHistory(true);
+  m2.get(a)!.write('echo new\r');
+  await waitFor(async () => (await snap(m2, a)).includes('new'));
+  await m2.saveAll();
+  assert.deepEqual(await readFile(file), before);
+  assert.deepEqual(await readdir(join(store, 'threads')), [`${a}.json`]);
+});
+
+test('rekey re-seals every thread with the stored key', async () => {
+  const store = await tempDir('tt-store-');
+  const m = manager(store, await tempDir('tt-home-'));
+  const a = await m.create();
+  m.get(a)!.write('echo rekeyed-$((9))\r');
+  await waitFor(async () => (await snap(m, a)).includes('rekeyed-9'));
+  await m.saveAll();
+  const winner = newKey();
+  m.rekey(winner);
+  await m.saveDirty();
+  const h = await new ThreadStore(store, winner).loadHistory(a);
+  assert.ok(h?.history.includes('rekeyed-9'));
 });

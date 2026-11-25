@@ -138,7 +138,7 @@ test('clear history drops earlier output and keeps the shell', async () => {
   const t = make();
   t.write('echo SECRET-$((1))\r');
   await waitFor(async () => (await snapText(t)).includes('SECRET-1'));
-  assert.equal(t.clearHistory(), true);
+  assert.equal(await t.clearHistory(), true);
   t.write('echo after-$((2))\r');
   await waitFor(async () => (await snapText(t)).includes('after-2'));
   const saved = await t.capture();
@@ -151,6 +151,12 @@ test('clear history is refused in a full-screen program', async () => {
   t.write('echo SECRET-$((3)); printf "\\033[?1049h\\033[HFULL"\r');
   await waitFor(() => t.fullScreen);
   const before = await t.capture();
-  assert.equal(t.clearHistory(), false);
+  assert.equal(await t.clearHistory(), false);
   assert.deepEqual(await t.capture(), before);
+});
+
+test('clear history also removes output not yet processed', async () => {
+  const t = make({ prefix: 'PENDING-SECRET\r\n' });
+  assert.equal(await t.clearHistory(), true);
+  assert.ok(!(await t.capture()).history.includes('PENDING-SECRET'));
 });

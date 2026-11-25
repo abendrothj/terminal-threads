@@ -146,3 +146,12 @@ test('round-1 plain-text history loads and is rewritten encrypted', async () => 
   assert.ok(!(await readFile(join(dir, 'threads', 'a.json'), 'utf8')).includes('OLD-PLAIN'));
   assert.deepEqual(await store.loadHistory('a'), h);
 });
+
+test('a new key takes effect for later saves', async () => {
+  const dir = await freshDir();
+  const store = new ThreadStore(dir, KEY);
+  const other = newKey();
+  store.setKey(other);
+  await store.saveHistory('a', { history: 'h2', frame: null });
+  assert.deepEqual(await new ThreadStore(dir, other).loadHistory('a'), { history: 'h2', frame: null });
+});

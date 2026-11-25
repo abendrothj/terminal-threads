@@ -23,6 +23,8 @@ export interface ManagerDeps {
   cols: number;
   rows: number;
   saveHistory: boolean;
+  // False when secret storage gave no key: history isn't saved, and existing files are kept.
+  keyAvailable?: boolean;
 }
 
 export class ThreadManager {
@@ -35,15 +37,19 @@ export class ThreadManager {
   // Every store write goes through this chain, so saves, closes and renames never interleave.
   private queue: Promise<unknown> = Promise.resolve();
   private disposed: Promise<void> | null = null;
+  private setting: boolean;
   private saving: boolean;
 
   constructor(deps: ManagerDeps) {
     this.deps = deps;
-    this.saving = deps.saveHistory;
+    this.setting = deps.saveHistory;
+    this.saving = deps.saveHistory && deps.keyAvailable !== false;
   }
 
   async restore(): Promise<void> {
     const { store, defaultDir } = this.deps;
+    // "Off" means gone, even if it was switched off while this window wasn't running.
+    if (!this.setting) await this.enqueue(() => store.deleteAllHistory());
     for (const meta of await store.loadIndex()) {
       const dir = [meta.lastDir, meta.startDir, defaultDir].find((d) => existsSync(d)) ?? defaultDir;
       // One unreadable file must not lose the other threads; this one restores without history.
@@ -101,16 +107,24 @@ export class ThreadManager {
   // Clears a thread's scrollback and rewrites its saved file now, so the old text leaves the disk.
   async clearHistory(id: string): Promise<boolean> {
     const t = this.threads.get(id);
-    if (!t || !t.clearHistory()) return false;
+    if (!t || !(await t.clearHistory())) return false;
     await this.enqueue(() => this.save((x) => x === t));
     return true;
   }
 
   // Off deletes every saved history file; threads still restore (names, order, folders).
+  // Only the user's setting deletes; a missing key just pauses saving.
   async setSaveHistory(on: boolean): Promise<void> {
-    this.saving = on;
-    if (on) this.threads.forEach((t) => { t.dirty = true; });
-    else await this.enqueue(() => this.deps.store.deleteAllHistory());
+    this.setting = on;
+    this.saving = on && this.deps.keyAvailable !== false;
+    if (this.saving) this.threads.forEach((t) => { t.dirty = true; });
+    if (!on) await this.enqueue(() => this.deps.store.deleteAllHistory());
+  }
+
+  // Another window stored a different key first: re-seal everything with the stored one.
+  rekey(key: Buffer): void {
+    this.deps.store.setKey(key);
+    this.threads.forEach((t) => { t.dirty = true; });
   }
 
   setWatched(id: string | null): void {

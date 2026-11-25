@@ -77,12 +77,15 @@ export class Thread {
   }
 
   // A full-screen program draws on the alternate screen, so clearing there would leave the normal
-  // scrollback (where the output to clear lives) untouched; refuse instead.
-  clearHistory(): boolean {
-    if (this.fullScreen) return false;
-    this.term.clear();
-    this.dirty = true;
-    return true;
+  // scrollback (where the output to clear lives) untouched; refuse instead. Runs after every chunk
+  // already received is parsed, so output printed before the clear can't land after it.
+  clearHistory(): Promise<boolean> {
+    return new Promise((resolve) => this.term.write('', () => {
+      if (this.fullScreen) return resolve(false);
+      this.term.clear();
+      this.dirty = true;
+      resolve(true);
+    }));
   }
 
   onData(l: (seq: number, data: string) => void): void {

@@ -6,31 +6,19 @@ import { ThreadStore } from './store.ts';
 import { parseViewMsg, type HostMsg, type ViewMsg } from './protocol.ts';
 import { ViewSync } from './sync.ts';
 import { FONT_KEYS, resolveFont } from './font.ts';
-import { newKey } from './crypt.ts';
+import { historyKey, KEY_NAME } from './key.ts';
 
 export const VIEW_ID = 'terminalThreads.view';
 const SAVE_KEY = 'terminalThreads.saveHistory';
-const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
-const KEY_NAME = 'terminalThreads.historyKey';
-
-// One 256-bit key per user in VS Code's secret storage (the OS keychain). Null if it can't be read
-// or created; history then isn't saved this session.
-async function historyKey(secrets: vscode.SecretStorage): Promise<Buffer | null> {
+// userInfo() throws for a uid with no passwd entry (possible in Remote containers).
+const loginShell = () => {
   try {
-    let stored = await secrets.get(KEY_NAME);
-    if (!stored) {
-      stored = newKey().toString('base64');
-      await secrets.store(KEY_NAME, stored);
-      if ((await secrets.get(KEY_NAME)) !== stored) return null;
-    }
-    const key = Buffer.from(stored, 'base64');
-    return key.length === 32 ? key : null;
-  } catch (e) {
-    console.warn('terminal-threads: secret storage unavailable', e);
+    return userInfo().shell;
+  } catch {
     return null;
   }
-}
-
+};
+const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
 export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private readonly context: vscode.ExtensionContext;
   private manager: ThreadManager | null = null;
@@ -38,7 +26,6 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | null = null;
   // Thread to show when the webview first reports ready (set by init, before any webview sync).
   private initial: string | null = null;
-  private hasKey = false;
   private size = { cols: 80, rows: 24 };
   private readonly attached = new Set<string>();
   private readonly sync = new ViewSync({
@@ -54,7 +41,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       vscode.window.onDidChangeWindowState(() => this.updateWatched()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (FONT_KEYS.some((k) => e.affectsConfiguration(k))) this.postFont();
-        if (e.affectsConfiguration(SAVE_KEY)) void this.manager?.setSaveHistory(saveSetting() && this.hasKey);
+        if (e.affectsConfiguration(SAVE_KEY)) void this.manager?.setSaveHistory(saveSetting());
       }),
     );
   }
@@ -114,22 +101,32 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
 
   private async init(): Promise<void> {
     const storage = this.context.storageUri ?? this.context.globalStorageUri;
-    const key = await historyKey(this.context.secrets);
-    this.hasKey = key !== null;
-    if (!key) {
+    const secrets = this.context.secrets;
+    const found = await historyKey(secrets);
+    if (!found) {
       void vscode.window.showWarningMessage("Terminal Threads couldn't use VS Code's secret storage, so thread history won't be saved this session.");
     }
-    const store = new ThreadStore(storage.fsPath, key);
-    await store.secure();
+    const store = new ThreadStore(storage.fsPath, found?.key ?? null);
+    await store.secure().catch((e) => console.warn('terminal-threads: could not tighten storage permissions', e));
+    // Two windows can create the first key at once; the one that ends up stored wins everywhere.
+    this.context.subscriptions.push(secrets.onDidChange(async (e) => {
+      if (e.key !== KEY_NAME || !found) return;
+      const stored = Buffer.from((await secrets.get(KEY_NAME)) ?? '', 'base64');
+      if (stored.length === 32 && !stored.equals(found.key)) {
+        found.key = stored;
+        this.manager?.rekey(stored);
+      }
+    }));
     const m = new ThreadManager({
       store,
       defaultDir: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir(),
-      shell: process.env.SHELL || userInfo().shell || '/bin/sh',
+      shell: process.env.SHELL || loginShell() || '/bin/sh',
       args: ['-l'],
       env: process.env,
       cols: this.size.cols,
       rows: this.size.rows,
-      saveHistory: saveSetting() && key !== null,
+      saveHistory: saveSetting(),
+      keyAvailable: found !== null,
     });
     this.manager = m;
     m.onChange(() => this.postThreads());

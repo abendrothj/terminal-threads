@@ -31,3 +31,11 @@ test("a file sealed for one thread doesn't open as another", () => {
   const key = newKey();
   assert.throws(() => open(key, 'b', seal(key, 'a', 'x')));
 });
+
+test('truncated tags and short IVs are rejected', () => {
+  const key = newKey();
+  const f = seal(key, 'a', 'x');
+  const short = Buffer.from(f.tag, 'base64').subarray(0, 8).toString('base64');
+  assert.throws(() => open(key, 'a', { ...f, tag: short }));
+  assert.throws(() => open(key, 'a', { ...f, iv: Buffer.alloc(8).toString('base64') }));
+});

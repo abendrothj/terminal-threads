@@ -34,10 +34,15 @@ const isEncrypted = (v: unknown): v is EncryptedFile => {
 export class ThreadStore {
   private readonly dir: string;
   // Null when secret storage is unavailable: nothing is saved and encrypted files are left alone.
-  private readonly key: Buffer | null;
+  private key: Buffer | null;
 
   constructor(dir: string, key: Buffer | null) {
     this.dir = dir;
+    this.key = key;
+  }
+
+  // Another window may create the key first; later saves use the key that is actually stored.
+  setKey(key: Buffer): void {
     this.key = key;
   }
 
