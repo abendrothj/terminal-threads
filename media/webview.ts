@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { HISTORY_LINES, type HostMsg, type ViewMsg } from '../src/protocol.ts';
 import type { ThreadInfo } from '../src/manager.ts';
+import { cellBackground } from '../src/padding.ts';
 
 declare function acquireVsCodeApi(): { postMessage(msg: ViewMsg): void };
 
@@ -57,7 +58,24 @@ try {
   console.warn('terminal-threads: WebGL unavailable, using the DOM renderer', e);
 }
 fit.fit();
-new MutationObserver(() => { term.options.theme = theme(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// The grid rarely fills the view; give the leftover strips the bottom-right cell's background while a
+// full-screen program is showing, the terminal background otherwise.
+let padding = '';
+function updatePadding(): void {
+  const t = theme();
+  const buf = term.buffer.active;
+  const cell = buf.type === 'alternate' ? buf.getLine(buf.viewportY + term.rows - 1)?.getCell(term.cols - 1) : undefined;
+  const ansi = ANSI.flatMap((c) => [t[c.toLowerCase() as keyof ITheme], t[`bright${c}` as keyof ITheme]]) as string[];
+  const order = [0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15].map((i) => ansi[i] ?? '');
+  const color = cell ? cellBackground(cell, { ansi: order, background: t.background ?? '', foreground: t.foreground ?? '' }) : t.background ?? '';
+  if (color === padding) return;
+  padding = color;
+  termEl.style.backgroundColor = color;
+  // xterm 6 paints the theme background on its scrollable element (the scrollbar strip) too.
+  for (const el of termEl.querySelectorAll<HTMLElement>('.xterm-scrollable-element, .xterm-viewport')) el.style.backgroundColor = color;
+}
+term.onRender(updatePadding);
+new MutationObserver(() => { term.options.theme = theme(); padding = ''; updatePadding(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 new ResizeObserver(() => fit.fit()).observe(termEl);
 
 term.onData((data) => { if (selected) vscode.postMessage({ type: 'input', id: selected, data }); });
