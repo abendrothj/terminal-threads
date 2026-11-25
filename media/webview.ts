@@ -190,4 +190,6 @@ window.addEventListener('message', (e: MessageEvent<HostMsg>) => {
   }
 });
 
+window.addEventListener('focus', () => vscode.postMessage({ type: 'focus', focused: true }));
+window.addEventListener('blur', () => vscode.postMessage({ type: 'focus', focused: false }));
 vscode.postMessage({ type: 'ready', cols: term.cols, rows: term.rows });

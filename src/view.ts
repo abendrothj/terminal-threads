@@ -76,6 +76,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => this.updateWatched());
     view.onDidDispose(() => {
       this.view = null;
+      void vscode.commands.executeCommand('setContext', 'terminalThreads.focused', false);
       this.sync.detach();
       this.updateWatched();
     });
@@ -113,6 +114,20 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       }
     }
     await m.setSaveHistory(saveSetting());
+  }
+
+  // Next / Previous Thread (keyboard), wrapping around the list.
+  async selectRelative(delta: number): Promise<void> {
+    await this.ready;
+    const ids = this.manager?.list().map((t) => t.id) ?? [];
+    if (ids.length === 0) return;
+    const i = ids.indexOf(this.sync.selected ?? '');
+    await this.select(ids[(i + delta + ids.length) % ids.length]!);
+  }
+
+  async closeSelected(): Promise<void> {
+    await this.ready;
+    if (this.sync.selected) await this.close(this.sync.selected);
   }
 
   // Right-click → Move Up / Move Down (the keyboard way to reorder).
@@ -221,6 +236,10 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'move':
         await m.move(msg.id, msg.index);
+        break;
+      case 'focus':
+        // VS Code sets no context key for focus inside a webview view; the shortcuts use this one.
+        await vscode.commands.executeCommand('setContext', 'terminalThreads.focused', msg.focused);
         break;
       case 'ack':
         this.sync.ack(msg.id, msg.chars);

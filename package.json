@@ -65,6 +65,21 @@
       {
         "command": "terminalThreads.moveDown",
         "title": "Move Down"
+      },
+      {
+        "command": "terminalThreads.nextThread",
+        "title": "Next Thread",
+        "category": "Terminal Threads"
+      },
+      {
+        "command": "terminalThreads.previousThread",
+        "title": "Previous Thread",
+        "category": "Terminal Threads"
+      },
+      {
+        "command": "terminalThreads.closeThread",
+        "title": "Close Thread",
+        "category": "Terminal Threads"
       }
     ],
     "menus": {
@@ -149,7 +164,27 @@
           "markdownDescription": "Encrypt saved thread history. `off` stores it as readable owner-only files, which is useful with Remote-SSH from several computers or without a keyring, but keeps any secrets printed in a thread in plain text. User settings only: a workspace can't change it."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "terminalThreads.nextThread",
+        "key": "ctrl+shift+]",
+        "mac": "cmd+shift+]",
+        "when": "terminalThreads.focused"
+      },
+      {
+        "command": "terminalThreads.previousThread",
+        "key": "ctrl+shift+[",
+        "mac": "cmd+shift+[",
+        "when": "terminalThreads.focused"
+      },
+      {
+        "command": "terminalThreads.new",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "terminalThreads.focused"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
