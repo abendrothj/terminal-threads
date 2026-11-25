@@ -39,6 +39,10 @@
       {
         "command": "terminalThreads.rename",
         "title": "Rename"
+      },
+      {
+        "command": "terminalThreads.clearHistory",
+        "title": "Clear History"
       }
     ],
     "menus": {
@@ -53,11 +57,19 @@
         {
           "command": "terminalThreads.rename",
           "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'"
+        },
+        {
+          "command": "terminalThreads.clearHistory",
+          "when": "webviewId == 'terminalThreads.view' && webviewSection == 'thread'"
         }
       ],
       "commandPalette": [
         {
           "command": "terminalThreads.rename",
+          "when": "false"
+        },
+        {
+          "command": "terminalThreads.clearHistory",
           "when": "false"
         }
       ]
@@ -74,6 +86,11 @@
           "minimum": 6,
           "maximum": 100,
           "markdownDescription": "Font size for terminal threads. Unset follows `#terminal.integrated.fontSize#`."
+        },
+        "terminalThreads.saveHistory": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Save each thread's history (encrypted) so it comes back after a restart. Turning this off deletes saved history; threads still come back, empty."
         }
       }
     }

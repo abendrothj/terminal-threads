@@ -22,6 +22,7 @@ export interface ManagerDeps {
   env: Record<string, string | undefined>;
   cols: number;
   rows: number;
+  saveHistory: boolean;
 }
 
 export class ThreadManager {
@@ -34,9 +35,11 @@ export class ThreadManager {
   // Every store write goes through this chain, so saves, closes and renames never interleave.
   private queue: Promise<unknown> = Promise.resolve();
   private disposed: Promise<void> | null = null;
+  private saving: boolean;
 
   constructor(deps: ManagerDeps) {
     this.deps = deps;
+    this.saving = deps.saveHistory;
   }
 
   async restore(): Promise<void> {
@@ -44,7 +47,7 @@ export class ThreadManager {
     for (const meta of await store.loadIndex()) {
       const dir = [meta.lastDir, meta.startDir, defaultDir].find((d) => existsSync(d)) ?? defaultDir;
       // One unreadable file must not lose the other threads; this one restores without history.
-      const history = await store.loadHistory(meta.id).catch((e) => {
+      const history = !this.saving ? null : await store.loadHistory(meta.id).catch((e) => {
         console.warn(`terminal-threads: could not read history for ${meta.id}`, e);
         return null;
       });
@@ -93,6 +96,21 @@ export class ThreadManager {
     meta.customName = name.trim() || null;
     this.changed();
     await this.enqueue(() => this.deps.store.saveIndex(this.metas));
+  }
+
+  // Clears a thread's scrollback and rewrites its saved file now, so the old text leaves the disk.
+  async clearHistory(id: string): Promise<boolean> {
+    const t = this.threads.get(id);
+    if (!t || !t.clearHistory()) return false;
+    await this.enqueue(() => this.save((x) => x === t));
+    return true;
+  }
+
+  // Off deletes every saved history file; threads still restore (names, order, folders).
+  async setSaveHistory(on: boolean): Promise<void> {
+    this.saving = on;
+    if (on) this.threads.forEach((t) => { t.dirty = true; });
+    else await this.enqueue(() => this.deps.store.deleteAllHistory());
   }
 
   setWatched(id: string | null): void {
@@ -151,7 +169,7 @@ export class ThreadManager {
       if (!t || !which(t)) continue;
       t.dirty = false;
       try {
-        await this.deps.store.saveHistory(meta.id, await t.capture());
+        if (this.saving) await this.deps.store.saveHistory(meta.id, await t.capture());
       } catch (e) {
         // Keep saving the others; this one is retried on the next save.
         t.dirty = true;

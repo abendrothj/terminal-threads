@@ -72,6 +72,19 @@ export class Thread {
     return this.currentTitle;
   }
 
+  get fullScreen(): boolean {
+    return this.term.buffer.active.type === 'alternate';
+  }
+
+  // A full-screen program draws on the alternate screen, so clearing there would leave the normal
+  // scrollback (where the output to clear lives) untouched; refuse instead.
+  clearHistory(): boolean {
+    if (this.fullScreen) return false;
+    this.term.clear();
+    this.dirty = true;
+    return true;
+  }
+
   onData(l: (seq: number, data: string) => void): void {
     this.dataListeners.push(l);
   }

@@ -16,8 +16,8 @@ async function tempDir(prefix: string): Promise<string> {
   cleanup.push(() => rm(d, { recursive: true, force: true }));
   return d;
 }
-function manager(storeDir: string, defaultDir: string): ThreadManager {
-  const m = new ThreadManager({ store: new ThreadStore(storeDir), defaultDir, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24 });
+function manager(storeDir: string, defaultDir: string, saveHistory = true): ThreadManager {
+  const m = new ThreadManager({ store: new ThreadStore(storeDir), defaultDir, shell: '/bin/sh', args: [], env: process.env, cols: 80, rows: 24, saveHistory });
   cleanup.push(() => m.dispose());
   return m;
 }
@@ -138,4 +138,51 @@ test('an unreadable history file does not stop the other threads restoring', asy
   assert.deepEqual((await readIndex(store)).map((t: { id: string }) => t.id), ['bad', 'good']);
   assert.ok(!(await readdir(join(store, 'threads'))).some((f) => f.endsWith('.tmp')));
   assert.ok((await readdir(join(store, 'threads'))).includes('good.json'));
+});
+
+test('clearing rewrites the saved file now', async () => {
+  const store = await tempDir('tt-store-');
+  const m = manager(store, await tempDir('tt-home-'));
+  const a = await m.create();
+  m.get(a)!.write('echo SECRET-$((4))\r');
+  await waitFor(async () => (await snap(m, a)).includes('SECRET-4'));
+  await m.saveAll();
+  assert.ok((await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('SECRET-4'));
+  assert.equal(await m.clearHistory(a), true);
+  assert.ok(!(await readFile(join(store, 'threads', `${a}.json`), 'utf8')).includes('SECRET-4'));
+});
+
+test('turning saving off deletes history and stops writing', async () => {
+  const store = await tempDir('tt-store-');
+  const m = manager(store, await tempDir('tt-home-'));
+  const a = await m.create();
+  m.get(a)!.write('echo kept-$((5))\r');
+  await waitFor(async () => (await snap(m, a)).includes('kept-5'));
+  await m.saveAll();
+  await m.setSaveHistory(false);
+  assert.deepEqual(await readdir(join(store, 'threads')), []);
+  m.get(a)!.write('echo more\r');
+  await waitFor(async () => (await snap(m, a)).includes('more'));
+  await m.saveAll();
+  assert.deepEqual(await readdir(join(store, 'threads')), []);
+  assert.deepEqual((await readIndex(store)).map((t: { id: string }) => t.id), [a]);
+  await m.setSaveHistory(true);
+  await m.saveAll();
+  assert.ok((await readdir(join(store, 'threads'))).includes(`${a}.json`));
+});
+
+test('restore with saving off shows only the separator', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const m1 = manager(store, home);
+  const a = await m1.create();
+  m1.get(a)!.write('echo old-$((6))\r');
+  await waitFor(async () => (await snap(m1, a)).includes('old-6'));
+  await m1.saveAll();
+  await m1.dispose();
+  const m2 = manager(store, home, false);
+  await m2.restore();
+  const text = await snap(m2, a);
+  assert.ok(!text.includes('old-6'));
+  assert.ok(text.includes('── session ended ──'));
 });

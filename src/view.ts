@@ -8,6 +8,8 @@ import { ViewSync } from './sync.ts';
 import { FONT_KEYS, resolveFont } from './font.ts';
 
 export const VIEW_ID = 'terminalThreads.view';
+const SAVE_KEY = 'terminalThreads.saveHistory';
+const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
 
 export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   private readonly context: vscode.ExtensionContext;
@@ -31,6 +33,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
       vscode.window.onDidChangeWindowState(() => this.updateWatched()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (FONT_KEYS.some((k) => e.affectsConfiguration(k))) this.postFont();
+        if (e.affectsConfiguration(SAVE_KEY)) void this.manager?.setSaveHistory(saveSetting());
       }),
     );
   }
@@ -72,20 +75,35 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     if (name !== undefined) await m.rename(id, name);
   }
 
+  // Right-click → Clear History. Refused while a full-screen program owns the screen.
+  async clearThreadHistory(id: unknown): Promise<void> {
+    await this.ready;
+    const m = this.manager;
+    if (!m || typeof id !== 'string' || !m.get(id)) return;
+    if (!(await m.clearHistory(id))) {
+      void vscode.window.showInformationMessage('Exit the full-screen program first, then clear its history.');
+      return;
+    }
+    if (this.sync.selected === id) await this.select(id);
+  }
+
   dispose(): Promise<void> {
     return this.manager?.dispose() ?? Promise.resolve();
   }
 
   private async init(): Promise<void> {
     const storage = this.context.storageUri ?? this.context.globalStorageUri;
+    const store = new ThreadStore(storage.fsPath);
+    await store.secure();
     const m = new ThreadManager({
-      store: new ThreadStore(storage.fsPath),
+      store,
       defaultDir: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir(),
       shell: process.env.SHELL ?? '/bin/zsh',
       args: ['-l'],
       env: process.env,
       cols: this.size.cols,
       rows: this.size.rows,
+      saveHistory: saveSetting(),
     });
     this.manager = m;
     m.onChange(() => this.postThreads());

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SavedHistory } from './history.ts';
 
@@ -10,6 +10,9 @@ export interface ThreadMeta {
 }
 
 const SAFE_ID = /^[A-Za-z0-9-]+$/;
+const ignoreMissing = (e: NodeJS.ErrnoException) => {
+  if (e.code !== 'ENOENT') throw e;
+};
 let tmpCounter = 0;
 
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -52,6 +55,22 @@ export class ThreadStore {
     return this.writeAtomic(this.historyPath(id), JSON.stringify(h));
   }
 
+  // Round 1 wrote with the default umask; make existing folders and files owner-only.
+  async secure(): Promise<void> {
+    const threads = join(this.dir, 'threads');
+    for (const [path, mode] of [[this.dir, 0o700], [threads, 0o700], [join(this.dir, 'index.json'), 0o600]] as const) {
+      await chmod(path, mode).catch(ignoreMissing);
+    }
+    const files = await readdir(threads).catch((e) => (ignoreMissing(e), [] as string[]));
+    for (const f of files) await chmod(join(threads, f), 0o600).catch(ignoreMissing);
+  }
+
+  async deleteAllHistory(): Promise<void> {
+    const threads = join(this.dir, 'threads');
+    const files = await readdir(threads).catch((e) => (ignoreMissing(e), [] as string[]));
+    await Promise.all(files.map((f) => rm(join(threads, f), { force: true })));
+  }
+
   async deleteHistory(id: string): Promise<void> {
     return rm(this.historyPath(id), { force: true });
   }
@@ -83,10 +102,10 @@ export class ThreadStore {
   }
 
   private async writeAtomic(file: string, data: string): Promise<void> {
-    await mkdir(dirname(file), { recursive: true });
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
     const tmp = `${file}.${process.pid}.${tmpCounter++}.tmp`;
     try {
-      await writeFile(tmp, data);
+      await writeFile(tmp, data, { mode: 0o600 });
       await rename(tmp, file);
     } catch (e) {
       await rm(tmp, { force: true });

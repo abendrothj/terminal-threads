@@ -133,3 +133,24 @@ test('Ctrl-D ends the shell like exit', async () => {
   t.write('\x04');
   await waitFor(async () => (await snapText(t)).includes('shell exited, press Enter to restart'));
 });
+
+test('clear history drops earlier output and keeps the shell', async () => {
+  const t = make();
+  t.write('echo SECRET-$((1))\r');
+  await waitFor(async () => (await snapText(t)).includes('SECRET-1'));
+  assert.equal(t.clearHistory(), true);
+  t.write('echo after-$((2))\r');
+  await waitFor(async () => (await snapText(t)).includes('after-2'));
+  const saved = await t.capture();
+  assert.ok(!saved.history.includes('SECRET-1'), saved.history);
+  assert.ok(saved.history.includes('after-2'));
+});
+
+test('clear history is refused in a full-screen program', async () => {
+  const t = make();
+  t.write('echo SECRET-$((3)); printf "\\033[?1049h\\033[HFULL"\r');
+  await waitFor(() => t.fullScreen);
+  const before = await t.capture();
+  assert.equal(t.clearHistory(), false);
+  assert.deepEqual(await t.capture(), before);
+});

@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile, mkdir, stat, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ThreadStore, type ThreadMeta } from '../src/store.ts';
@@ -77,4 +77,32 @@ test('rejects unsafe ids', async () => {
   await assert.rejects(store.saveHistory('../x', { history: 'h', frame: null }));
   await writeFile(join(dir, 'index.json'), JSON.stringify({ version: 1, threads: [meta('../x'), meta('ok')] }));
   assert.deepEqual(await quiet(() => store.loadIndex()), [meta('ok')]);
+});
+
+test('files and folders are private', async () => {
+  const dir = await freshDir();
+  const store = new ThreadStore(join(dir, 's'));
+  await store.saveIndex([meta('a')]);
+  await store.saveHistory('a', { history: 'h', frame: null });
+  const mode = async (p: string) => (await stat(p)).mode & 0o777;
+  assert.equal(await mode(join(dir, 's')), 0o700);
+  assert.equal(await mode(join(dir, 's', 'threads')), 0o700);
+  assert.equal(await mode(join(dir, 's', 'index.json')), 0o600);
+  assert.equal(await mode(join(dir, 's', 'threads', 'a.json')), 0o600);
+});
+
+test('secure fixes round-1 permissions', async () => {
+  const dir = await freshDir();
+  await mkdir(join(dir, 'threads'), { recursive: true, mode: 0o755 });
+  await chmod(dir, 0o755);
+  await chmod(join(dir, 'threads'), 0o755);
+  await writeFile(join(dir, 'index.json'), '{}', { mode: 0o644 });
+  await writeFile(join(dir, 'threads', 'a.json'), '{}', { mode: 0o644 });
+  await new ThreadStore(dir).secure();
+  const mode = async (p: string) => (await stat(p)).mode & 0o777;
+  assert.equal(await mode(dir), 0o700);
+  assert.equal(await mode(join(dir, 'threads')), 0o700);
+  assert.equal(await mode(join(dir, 'index.json')), 0o600);
+  assert.equal(await mode(join(dir, 'threads', 'a.json')), 0o600);
+  await new ThreadStore(join(dir, 'missing')).secure();
 });
