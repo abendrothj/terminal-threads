@@ -18,7 +18,8 @@ test('drag a streaming thread to the top: order persists and its scrollback stay
     let frame = await openThreads(vs.page);
     const [a, b, c] = await threeThreads(vs.page, frame);
     await typeIn(vs.page, frame, 'for i in $(seq 1 150); do echo stream-$i; sleep 0.02; done\r');
-    await waitFor(async () => (await screenText(frame)).includes('stream-20'), 15_000, 'streaming');
+    await waitFor(async () => (await screenText(frame)).includes('stream-20'), 15_000, 'streaming')
+      .catch(async (e) => { console.log(`stream start: screen=${JSON.stringify((await screenText(frame)).slice(-300))}`); throw e; });
     await frame.locator(`#list li[data-id="${c}"]`).dragTo(frame.locator(`#list li[data-id="${a}"]`));
     await waitFor(async () => (await order(frame))[0] === c, 10_000, 'moved to top');
     assert.deepEqual(await order(frame), [c, a, b]);

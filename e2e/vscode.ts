@@ -174,6 +174,8 @@ export const threads = (frame: Frame) => frame.$$eval('#list li', (lis) => lis.m
 
 export async function typeIn(page: Page, frame: Frame, text: string): Promise<void> {
   await frame.click('#term .xterm');
+  // Keys typed before xterm's input has focus go nowhere (seen on slow CI runners).
+  await frame.waitForFunction(() => document.activeElement?.classList.contains('xterm-helper-textarea'), null, { timeout: 15_000 });
   await page.keyboard.type(text, { delay: 5 });
 }
 
