@@ -115,8 +115,19 @@ export async function palette(page: Page, command: string): Promise<void> {
   const input = await page.waitForSelector('.quick-input-widget:not([style*="display: none"]) input', { timeout: 15_000 });
   await input.focus();
   await input.fill('>' + command);
+  let typed = Date.now();
   // Press Enter only once the highlighted entry is the command asked for.
-  await waitFor(async () => (await page.$eval('.quick-input-list .monaco-list-row.focused .label-name', (e) => e.textContent ?? '').catch(() => '')).replace(/\s+/g, ' ').includes(command.split(': ').at(-1)!), 15_000, `palette entry "${command}"`)
+  await waitFor(async () => {
+    const focused = await page.$eval('.quick-input-list .monaco-list-row.focused .label-name', (e) => e.textContent ?? '').catch(() => '');
+    if (focused.replace(/\s+/g, ' ').includes(command.split(': ').at(-1)!)) return true;
+    // Under load the palette can miss the typed text and keep listing every command: type it again.
+    if (Date.now() - typed > 2000) {
+      await input.fill('');
+      await input.fill('>' + command);
+      typed = Date.now();
+    }
+    return false;
+  }, 15_000, `palette entry "${command}"`)
     .catch(async (e) => {
       const rows = await page.$$eval('.quick-input-list .monaco-list-row', (r) => r.slice(0, 6).map((x) => `${x.classList.contains('focused') ? '>' : ' '}${x.querySelector('.label-name')?.textContent}`));
       throw new Error(`${(e as Error).message}; palette shows ${JSON.stringify(rows)}`);
