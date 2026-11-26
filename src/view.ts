@@ -20,6 +20,7 @@ const loginShell = () => {
 };
 // Machine-scoped too: a workspace must not be able to make + run a command.
 const startupCommand = () => vscode.workspace.getConfiguration().get<string>('terminalThreads.startupCommand', '');
+const TAKEN_OVER_WARNING = "Another window opened some of this window's threads while this one wasn't responding. They keep running here, but only that window saves them now.";
 const NO_KEY_WARNING = "Terminal Threads couldn't use VS Code's secret storage, so thread history won't be saved this session.";
 const saveSetting = () => vscode.workspace.getConfiguration().get<boolean>(SAVE_KEY, true);
 // Machine-scoped in the manifest, so a workspace's .vscode/settings.json can't turn encryption off.
@@ -203,6 +204,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     this.manager = m;
     m.onChange(() => this.postThreads());
     m.onWaiting((id) => void this.notifyWaiting(id));
+    m.onTakenOver(() => void vscode.window.showWarningMessage(TAKEN_OVER_WARNING));
     await m.restore();
     m.start();
     if (m.list().length === 0) await m.create(startupCommand());
