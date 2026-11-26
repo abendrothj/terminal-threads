@@ -184,3 +184,12 @@ test('closing a thread ends a shell that ignores the hangup signal', async () =>
   await waitFor(() => leftover().length === 0, 6000).catch(() => {});
   assert.deepEqual(leftover(), [], 'the shell survived its thread being closed');
 });
+
+test('a shell that changes its name while starting still follows cd', async () => {
+  // node-pty's spawn-helper, then macOS's /bin/sh stub, then bash: the name seen first isn't the shell's.
+  const t = make({ shell: '/usr/bin/perl', args: ['-e', '$| = 1; print "starting\\n"; sleep 1; exec "/bin/bash", "--norc", "-i"'], env: { ...process.env, PS1: 'READY$ ' } });
+  await waitFor(async () => (await snapText(t)).includes('READY$'));
+  await sleep(1500);
+  t.write('cd /tmp\r');
+  await waitFor(() => t.lastDir === realpathSync('/tmp') && t.title === 'tmp — bash');
+});

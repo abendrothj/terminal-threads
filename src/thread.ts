@@ -195,10 +195,14 @@ export class Thread {
     const pty = this.pty;
     if (!pty || this.disposed) return;
     const raw = pty.process;
-    this.program = programName(raw) ?? this.program;
+    const program = programName(raw) ?? this.program;
     // Until the shell has started, node-pty reports the spawn path itself; after that, ask for the
-    // shell's own name (macOS /bin/sh runs as bash, so it can't be derived from the path).
-    if (this.shellName === null && raw && raw !== this.opts.shell) this.shellName = (await processName(pty.pid)) ?? programName(raw);
+    // shell's own name (macOS /bin/sh runs as bash, so it can't be derived from the path). It
+    // settles only after node-pty's spawn-helper and such stubs, so ask again when the program changes.
+    if (raw && raw !== this.opts.shell && (this.shellName === null || program !== this.program)) {
+      this.shellName = (await processName(pty.pid)) ?? programName(raw);
+    }
+    this.program = program;
     const shellInFront = this.program === this.shellName || this.program === basename(this.opts.shell);
     if (shellInFront) {
       const wait = this.lastLookup + LOOKUP_INTERVAL_MS - Date.now();
