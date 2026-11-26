@@ -182,7 +182,10 @@ test('closing a thread ends a shell that ignores the hangup signal', async () =>
   t.dispose();
   const leftover = () => kids().filter((p) => !before.has(p));
   await waitFor(() => leftover().length === 0, 6000).catch(() => {});
-  assert.deepEqual(leftover(), [], 'the shell survived its thread being closed');
+  const survivors = leftover();
+  // A survivor would keep this test file running forever: end it before failing.
+  survivors.forEach((p) => process.kill(Number(p), 'SIGKILL'));
+  assert.deepEqual(survivors, [], 'the shell survived its thread being closed');
 });
 
 test('a shell that changes its name while starting still follows cd', async () => {
