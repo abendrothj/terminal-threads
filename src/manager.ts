@@ -288,7 +288,9 @@ export class ThreadManager {
   // in between.
   private async syncIndex(reorder?: (all: ThreadMeta[]) => ThreadMeta[]): Promise<void> {
     try {
-      const mine = () => this.metas.filter((m) => !this.takenOver.has(m.id));
+      // Only threads the claim below covers: one created while it waits is left to its own sync.
+      const claimed = new Set(this.metas.map((m) => m.id));
+      const mine = () => this.metas.filter((m) => claimed.has(m.id) && !this.takenOver.has(m.id));
       const taken = await this.deps.store.claim([...mine().map((m) => m.id), ...this.closing]);
       this.lost(taken);
       // A closed thread another window took over is that window's to keep.
@@ -314,9 +316,10 @@ export class ThreadManager {
 
   // Threads another window now holds: stop saving the open ones here, and say so once.
   private lost(ids: string[]): void {
-    const fresh = ids.filter((id) => !this.takenOver.has(id));
+    // A thread closed here meanwhile needs no warning: that window keeps it.
+    const fresh = ids.filter((id) => this.threads.has(id) && !this.takenOver.has(id));
     if (fresh.length === 0) return;
-    fresh.filter((id) => this.threads.has(id)).forEach((id) => this.takenOver.add(id));
+    fresh.forEach((id) => this.takenOver.add(id));
     this.takenOverListeners.forEach((l) => l());
   }
 

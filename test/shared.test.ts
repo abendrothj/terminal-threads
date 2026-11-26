@@ -2,10 +2,11 @@ import { test, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, readdir, writeFile, mkdir, utimes, chmod, stat } from 'node:fs/promises';
 import { watch } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ThreadManager } from '../src/manager.ts';
+import { ThreadManager, SAVE_INTERVAL_MS } from '../src/manager.ts';
 import { ThreadStore, LEASE_STALE_MS, LOCK_STALE_MS, type ThreadMeta } from '../src/store.ts';
 import { newKey } from '../src/crypt.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -164,6 +165,36 @@ test("a live window's threads stay its own after this computer's network name ch
   assert.deepEqual(b.list(), [], 'both windows would write the same history file');
 });
 
+test('leases are tied to this boot, so a reboot frees a crashed window\'s threads', { skip: !['darwin', 'linux'].includes(process.platform) }, async () => {
+  // After a reboot (or a container restart) the old pids belong to other processes.
+  const store = await tempDir('tt-store-');
+  const a = manager(store, await tempDir('tt-home-'));
+  await a.restore();
+  await a.create();
+  const [lease] = await leases(store);
+  const boot = process.platform === 'darwin'
+    ? execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], { encoding: 'utf8' }).trim()
+    : (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
+  assert.ok(lease.machine.includes(boot), `lease names ${lease.machine}, not this boot ${boot}`);
+});
+
+test("a crashed window's pid reused by another process doesn't hold its threads", { skip: process.platform !== 'linux' }, async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const a = manager(store, home);
+  await a.restore();
+  const a1 = await a.create();
+  const [lease] = await leases(store);
+  await a.dispose();
+  // The pid now belongs to an unrelated live process (here, one this test starts).
+  const other = spawn('sleep', ['30']);
+  cleanup.push(async () => other.kill('SIGKILL'));
+  await writeFile(lease.file, JSON.stringify({ ...lease, file: undefined, pid: other.pid }));
+  const b = manager(store, home);
+  await b.restore();
+  assert.deepEqual(b.list().map((t) => t.id), [a1]);
+});
+
 test('a window whose threads were taken over stops writing them', async () => {
   // Another host's window (a storage folder shared over the network) that stopped refreshing looks
   // gone, so a window here takes its threads.
@@ -216,7 +247,7 @@ test('closing a thread another window took over, before noticing, leaves that wi
   let warned = 0;
   a.onTakenOver(() => warned++);
   await a.close(a1);
-  assert.equal(warned, 1);
+  assert.equal(warned, 0, 'no warning for a thread closed here: nothing of it is lost');
   assert.deepEqual(await ids(store), [a1]);
   assert.ok((await readdir(join(store, 'threads'))).includes(`${a1}.json`));
   await b.dispose();
@@ -258,6 +289,81 @@ test('a window still opens when the thread list stays locked', async () => {
   const c = manager(store, home);
   await c.restore();
   assert.ok(c.list().some((t) => t.id === a1));
+});
+
+test("moving a thread another window took over leaves that window's order alone", async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const a = manager(store, home);
+  await a.restore();
+  const a1 = await a.create();
+  const a2 = await a.create();
+  const [lease] = await leases(store);
+  await writeFile(lease.file, JSON.stringify({ ...lease, file: undefined, machine: 'another-computer' }));
+  await utimes(lease.file, ago(LEASE_STALE_MS * 2), ago(LEASE_STALE_MS * 2));
+  const b = manager(store, home);
+  await b.restore();
+  await a.heartbeat();
+  await a.move(a2, 0);
+  assert.deepEqual(await ids(store), [a1, a2]);
+});
+
+test('a thread created while another write waits for the lock stays out of the list until its lease has it', async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const s = new ThreadStore(store, KEY);
+  const a = manager(store, home, s);
+  await a.restore();
+  const a1 = await a.create();
+  // From here each claim waits until the test lets it through, like a busy lock.
+  const real = s.claim.bind(s);
+  const gates: (() => void)[] = [];
+  s.claim = (ids) => new Promise<void>((r) => gates.push(r)).then(() => real(ids));
+  const until = async (n: number) => { while (gates.length < n) await sleep(5); };
+  const renamed = a.rename(a1, 'busy');
+  await until(1);
+  const created = a.create();
+  gates[0]!();
+  try {
+    // The rename's write is done; the new thread's claim is waiting. Another window starts now.
+    await renamed;
+    await until(2);
+    const b = manager(store, home);
+    await b.restore();
+    assert.deepEqual(b.list(), [], 'both windows would run the new thread');
+  } finally {
+    s.claim = real;
+    gates.forEach((g) => g());
+    await created;
+  }
+});
+
+test("a lease that can't be read doesn't stop a newer window saving its own threads", async () => {
+  const store = await tempDir('tt-store-');
+  const home = await tempDir('tt-home-');
+  const a = manager(store, home);
+  await a.restore();
+  await a.create();
+  const [lease] = await leases(store);
+  await chmod(lease.file, 0o000);
+  cleanup.push(() => chmod(lease.file, 0o600));
+  const b = manager(store, home);
+  await b.restore();
+  const b1 = await b.create();
+  await b.rename(b1, 'mine');
+  await b.saveDirty();
+  assert.equal((await names(store))[b1], 'mine');
+});
+
+test('a save tick still waiting holds back the next ones', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const store = await tempDir('tt-store-');
+  const a = manager(store, await tempDir('tt-home-'));
+  let saves = 0;
+  a.saveDirty = () => { saves++; return new Promise(() => {}); };
+  a.start();
+  t.mock.timers.tick(SAVE_INTERVAL_MS * 3);
+  assert.equal(saves, 1);
 });
 
 // The index write fails once (disk full, permissions), then works again.
@@ -359,6 +465,15 @@ describe('the index lock', { concurrency: true }, () => {
     resumeNext([]);
     await within(Promise.all([late, next]), LOCK_STALE_MS);
     assert.deepEqual((await new ThreadStore(dir, KEY).loadIndex()).map((t) => t.id).sort(), ['late', 'next']);
+  });
+
+  test("a breaking window's guard left by a crash is cleared at startup", async () => {
+    const dir = await tempDir('tt-store-');
+    const guard = join(dir, 'index.lock.break');
+    await writeFile(guard, '');
+    await utimes(guard, ago(3600_000), ago(3600_000));
+    await new ThreadStore(dir, KEY).cleanup();
+    assert.ok(!(await stat(guard).then(() => true, () => false)));
   });
 
   test('windows breaking the same stale lock together lose nothing', async () => {

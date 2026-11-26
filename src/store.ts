@@ -39,10 +39,9 @@ export const LEASE_STALE_MS = 60_000;
 
 class LostLock extends Error {}
 
-// Where a lease's pid can be checked: on Linux the boot and the pid namespace (a container shares the
-// host's kernel but not its pids, and pids are reused after a reboot), on macOS the hardware UUID.
-// Not the hostname, which on a Mac can come from the network and change. Elsewhere (Windows, until
-// round 4), the hostname.
+// Where a lease's pid can be checked: this boot (pids are reused after a reboot), and on Linux also
+// the pid namespace (a container shares the host's kernel but not its pids). Not the hostname, which
+// on a Mac can come from the network and change. Elsewhere (Windows, until round 4), the hostname.
 let machine: Promise<string> | undefined;
 function machineId(): Promise<string> {
   machine ??= (async () => {
@@ -51,25 +50,34 @@ function machineId(): Promise<string> {
       const pids = await readlink('/proc/self/ns/pid').catch(() => null);
       if (boot && pids) return `${boot.trim()} ${pids}`;
     } else if (process.platform === 'darwin') {
-      const out = await new Promise<string>((resolve) => {
-        execFile('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { timeout: 5000 }, (err, stdout) => resolve(err ? '' : stdout));
+      const boot = await new Promise<string>((resolve) => {
+        execFile('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], { timeout: 5000 }, (err, stdout) => resolve(err ? '' : stdout.trim()));
       });
-      const uuid = /"IOPlatformUUID" = "([^"]+)"/.exec(out)?.[1];
-      if (uuid) return uuid;
+      if (boot) return boot;
     }
     return hostname();
   })();
   return machine;
 }
 
+// When a process started (Linux; null elsewhere). A restarted container runs the same pids in the
+// same order, so a crashed window's pid can be alive again as another process.
+async function startTime(pid: number): Promise<string | null> {
+  if (process.platform !== 'linux') return null;
+  const stat = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => null);
+  // Field 22; counted after the name, which is in parentheses and may contain spaces.
+  return stat?.slice(stat.lastIndexOf(')') + 2).split(' ')[19] ?? null;
+}
+
 interface Lease {
   machine: string;
   pid: number;
+  start?: string | null;
   ids: string[];
 }
 const isLease = (v: unknown): v is Lease => {
   const l = v as Lease;
-  return typeof v === 'object' && v !== null && isString(l.machine) && Number.isInteger(l.pid) && Array.isArray(l.ids) && l.ids.every(isString);
+  return typeof v === 'object' && v !== null && isString(l.machine) && Number.isInteger(l.pid) && (l.start === undefined || l.start === null || isString(l.start)) && Array.isArray(l.ids) && l.ids.every(isString);
 };
 const pidAlive = (pid: number) => {
   try {
@@ -150,7 +158,7 @@ export class ThreadStore {
   // Startup: the threads no live window holds, now held by this one.
   claimFree(): Promise<ThreadMeta[]> {
     return this.withLock(async (ensure) => {
-      const held = await this.heldElsewhere();
+      const held = await this.heldElsewhere(true);
       const free = (await this.loadIndex()).filter((t) => !held.has(t.id));
       await ensure();
       await this.writeLease(free.map((t) => t.id));
@@ -160,9 +168,11 @@ export class ThreadStore {
 
   // The threads this window has open; claimed before a new thread enters the index, so no other
   // window can restore it in between. Returns the ones another live window holds (not claimed).
+  // A lease that can't be read is passed over: it can't hold a thread created since, and the rest
+  // this window claimed earlier, under the lock.
   claim(ids: string[]): Promise<string[]> {
     return this.withLock(async (ensure) => {
-      const held = await this.heldElsewhere();
+      const held = await this.heldElsewhere(false);
       await ensure();
       await this.writeLease(ids.filter((id) => !held.has(id)));
       return ids.filter((id) => held.has(id));
@@ -187,7 +197,8 @@ export class ThreadStore {
   }
 
   // Threads held by other live windows. Dead windows' leases are removed on the way.
-  private async heldElsewhere(now = Date.now()): Promise<Set<string>> {
+  // `strict`: a lease that can't be read fails the call (whose threads it holds is unknown).
+  private async heldElsewhere(strict: boolean, now = Date.now()): Promise<Set<string>> {
     const owners = join(this.dir, 'owners');
     const held = new Set<string>();
     const here = await machineId();
@@ -195,12 +206,18 @@ export class ThreadStore {
     for (const f of files.filter((n) => n.endsWith('.json'))) {
       const file = join(owners, f);
       if (file === this.lease) continue;
-      // Gone meanwhile: that window released it. Any other read error: can't tell whose threads it
-      // holds, so fail (and retry later) rather than take them.
-      const [text, mtime] = await Promise.all([
-        readFile(file, 'utf8').catch((e) => (ignoreMissing(e), null)),
-        stat(file).then((st) => st.mtimeMs, (e) => (ignoreMissing(e), 0)),
-      ]);
+      // Gone meanwhile: that window released it. Any other read error: see `strict`.
+      let text: string | null;
+      let mtime: number;
+      try {
+        [text, mtime] = await Promise.all([
+          readFile(file, 'utf8').catch((e) => (ignoreMissing(e), null)),
+          stat(file).then((st) => st.mtimeMs, (e) => (ignoreMissing(e), 0)),
+        ]);
+      } catch (e) {
+        if (strict) throw e;
+        continue;
+      }
       if (text === null) continue;
       let lease: unknown = null;
       try {
@@ -209,10 +226,12 @@ export class ThreadStore {
         // unreadable: treated as gone
       }
       // On this machine a lease lives as long as its window's process, however long that window went
-      // without refreshing (paused, frozen, asleep); a crashed window's pid reused by another process
-      // keeps its threads held until that process ends. Another machine's pid can't be checked, so
-      // its lease lives as long as it's refreshed.
-      if (isLease(lease) && (lease.machine === here ? pidAlive(lease.pid) : now - mtime < LEASE_STALE_MS)) {
+      // without refreshing (paused, frozen, asleep). Where start times can't be read (macOS), a
+      // crashed window's pid reused within the same boot keeps its threads held until that process
+      // ends. Another machine's pid can't be checked, so its lease lives as long as it's refreshed.
+      if (isLease(lease) && (lease.machine === here
+        ? pidAlive(lease.pid) && (!lease.start || (await startTime(lease.pid)) === lease.start)
+        : now - mtime < LEASE_STALE_MS)) {
         lease.ids.forEach((id) => held.add(id));
         continue;
       }
@@ -309,9 +328,9 @@ export class ThreadStore {
   }
 
   private async writeLease(ids: string[]): Promise<void> {
-    this.leaseIds = [...ids];
-    const lease: Lease = { machine: await machineId(), pid: process.pid, ids: this.leaseIds };
+    const lease: Lease = { machine: await machineId(), pid: process.pid, start: await startTime(process.pid), ids: [...ids] };
     await this.writeAtomic(this.lease, JSON.stringify(lease));
+    this.leaseIds = lease.ids;
   }
 
   async loadHistory(id: string): Promise<SavedHistory | null> {
@@ -369,8 +388,9 @@ export class ThreadStore {
       const files = await readdir(dir).catch((e) => (ignoreMissing(e), [] as string[]));
       for (const f of files) {
         const corrupt = /\.corrupt-(\d+)$/.exec(f);
-        // A recent .tmp may be another window's save in progress (shared storage); leave it.
-        const staleTmp = f.endsWith('.tmp') && now - (await stat(join(dir, f)).then((st) => st.mtimeMs, () => now)) > 10 * 60_000;
+        // A recent .tmp (or lock-breaking guard) may be another window's work in progress (shared
+        // storage); leave it.
+        const staleTmp = (f.endsWith('.tmp') || f === 'index.lock.break') && now - (await stat(join(dir, f)).then((st) => st.mtimeMs, () => now)) > 10 * 60_000;
         if (staleTmp || (corrupt && now - Number(corrupt[1]) > MONTH)) await rm(join(dir, f), { force: true });
       }
     }
