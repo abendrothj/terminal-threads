@@ -1,4 +1,5 @@
 import { test, after } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -167,4 +168,19 @@ test('typing before the shell starts still finds the folder', async () => {
   const t = make();
   t.write('sleep 0.5; cd /tmp\r');
   await waitFor(() => t.lastDir === realpathSync('/tmp') && t.title.startsWith('tmp — '));
+});
+
+test('closing a thread ends a shell that ignores the hangup signal', async () => {
+  // Bash can miss a SIGHUP that lands while it is still starting; closing must end the shell anyway.
+  const kids = (): string[] => {
+    try { return execFileSync('pgrep', ['-P', String(process.pid)], { encoding: 'utf8' }).split('\n').filter(Boolean); } catch { return []; }
+  };
+  const before = new Set(kids());
+  const t = new Thread({ id: 'hup', cwd: homedir(), shell: '/bin/sh', args: ['-c', "trap '' HUP; read x"], env: process.env, cols: 80, rows: 24, prefix: '' });
+  await waitFor(() => kids().some((p) => !before.has(p)));
+  await sleep(300);
+  t.dispose();
+  const leftover = () => kids().filter((p) => !before.has(p));
+  await waitFor(() => leftover().length === 0, 6000).catch(() => {});
+  assert.deepEqual(leftover(), [], 'the shell survived its thread being closed');
 });

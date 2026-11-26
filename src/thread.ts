@@ -23,6 +23,7 @@ export interface ThreadOptions {
 const EXITED = '\r\n\x1b[2m── shell exited, press Enter to restart ──\x1b[0m\r\n';
 const LOOKUP_INTERVAL_MS = 1000;
 const AFTER_ENTER_MS = 150;
+const KILL_GRACE_MS = 3000;
 
 export class Thread {
   readonly id: string;
@@ -136,7 +137,12 @@ export class Thread {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     const pty = this.pty;
     this.pty = null;
-    pty?.kill();
+    if (pty) {
+      // Bash can miss a SIGHUP that lands while it is still starting; force it after a grace period.
+      const force = setTimeout(() => pty.kill('SIGKILL'), KILL_GRACE_MS).unref();
+      pty.onExit(() => clearTimeout(force));
+      pty.kill();
+    }
     this.term.dispose();
   }
 
